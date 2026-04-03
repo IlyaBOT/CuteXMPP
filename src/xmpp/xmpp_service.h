@@ -78,7 +78,7 @@ private:
     void connectSignals();
     void resetSessionState();
     void rebuildChatsFromRoster();
-    void requestContactVCard(const QString& bareJid);
+    void requestContactVCard(const QString& bareJid, bool forceRefresh = false);
     void requestOwnVCard();
     void requestConversationPreview(const QString& chatId);
     void loadConversationFromMam(const QString& chatId, int maxMessages, bool olderMessages = false);
@@ -118,8 +118,12 @@ private:
     QHash<QString, ChatHistoryState> m_historyStates;
     QHash<QString, QXmppMucRoom*> m_mucRooms;
     QHash<QString, QString> m_mucNicks;
+    QHash<QString, QByteArray> m_contactPhotoHashes;
     QSet<QString> m_requestedRoomInfo;
     QSet<QString> m_previewRequestsInFlight;
+    QSet<QString> m_loadedConversationPreviews;
+    QSet<QString> m_contactVCardRequestsInFlight;
+    QSet<QString> m_loadedContactVCards;
     int m_lastLoggedState = -1;
     PendingOperation m_pendingOperation = PendingOperation::None;
     std::optional<LoginRequest> m_pendingLogin;

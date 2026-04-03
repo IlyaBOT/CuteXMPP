@@ -717,8 +717,12 @@ void XmppService::resetSessionState()
     m_historyStates.clear();
     m_mucRooms.clear();
     m_mucNicks.clear();
+    m_contactPhotoHashes.clear();
     m_requestedRoomInfo.clear();
     m_previewRequestsInFlight.clear();
+    m_loadedConversationPreviews.clear();
+    m_contactVCardRequestsInFlight.clear();
+    m_loadedContactVCards.clear();
     emit chatsChanged();
 }
 
@@ -737,42 +741,68 @@ void XmppService::rebuildChatsFromRoster()
     emit chatsChanged();
 }
 
-void XmppService::requestContactVCard(const QString& bareJid)
+void XmppService::requestContactVCard(const QString& bareJid, bool forceRefresh)
 {
     if (!m_vCardManager || bareJid.isEmpty()) {
         return;
     }
+    if (m_contactVCardRequestsInFlight.contains(bareJid)) {
+        return;
+    }
+    if (!forceRefresh && m_loadedContactVCards.contains(bareJid)) {
+        return;
+    }
 
+    m_contactVCardRequestsInFlight.insert(bareJid);
     m_vCardManager->fetchVCard(bareJid).then(this, [this, bareJid](QXmppVCardManager::VCardIqResult&& result) {
+        m_contactVCardRequestsInFlight.remove(bareJid);
         if (!std::holds_alternative<QXmppVCardIq>(result) || !m_chats.contains(bareJid)) {
             return;
         }
 
         const QXmppVCardIq iq = std::get<QXmppVCardIq>(std::move(result));
         ChatSummary& chat = m_chats[bareJid];
+        bool changed = false;
 
         if (chat.title.trimmed().isEmpty()) {
             if (!iq.nickName().trimmed().isEmpty()) {
                 chat.title = iq.nickName().trimmed();
+                changed = true;
             } else if (!iq.fullName().trimmed().isEmpty()) {
                 chat.title = iq.fullName().trimmed();
+                changed = true;
             }
         }
 
         if (!iq.description().trimmed().isEmpty()) {
-            chat.description = iq.description().trimmed();
+            const QString description = iq.description().trimmed();
+            if (chat.description != description) {
+                chat.description = description;
+                changed = true;
+            }
         } else if (chat.description.trimmed().isEmpty()) {
             chat.description = bareJid;
+            changed = true;
         }
 
         if (!iq.photo().isEmpty()) {
             QImage avatar;
             avatar.loadFromData(iq.photo());
             if (!avatar.isNull()) {
-                chat.avatar = avatar;
+                if (chat.avatar != avatar) {
+                    chat.avatar = avatar;
+                    changed = true;
+                }
             }
+        } else if (!chat.avatar.isNull()) {
+            chat.avatar = QImage();
+            changed = true;
         }
-        emit chatsChanged();
+
+        m_loadedContactVCards.insert(bareJid);
+        if (changed) {
+            emit chatsChanged();
+        }
     });
 }
 
@@ -805,6 +835,9 @@ void XmppService::requestConversationPreview(const QString& chatId)
     if (!m_mamManager || !m_session.has_value() || chatId.isEmpty() || m_previewRequestsInFlight.contains(chatId)) {
         return;
     }
+    if (m_loadedConversationPreviews.contains(chatId) || !m_messages.value(chatId).isEmpty()) {
+        return;
+    }
 
     m_previewRequestsInFlight.insert(chatId);
 
@@ -821,6 +854,7 @@ void XmppService::requestConversationPreview(const QString& chatId)
             }
 
             const QXmppMamManager::RetrievedMessages retrieved = std::get<QXmppMamManager::RetrievedMessages>(std::move(result));
+            m_loadedConversationPreviews.insert(chatId);
             if (retrieved.messages.isEmpty()) {
                 return;
             }
@@ -953,6 +987,7 @@ void XmppService::loadConversationFromMam(const QString& chatId, int maxMessages
             trimConversationBuffer(conversation, olderMessages);
 
             updateConversationPreview(chatId);
+            m_loadedConversationPreviews.insert(chatId);
             emit messagesChanged(chatId);
             emit chatsChanged();
 
@@ -1349,7 +1384,19 @@ void XmppService::handlePresenceReceived(const QXmppPresence& presence)
     ensureChatExists(bareJid);
     updateChatPresence(bareJid);
     if (presence.vCardUpdateType() == QXmppPresence::VCardUpdateValidPhoto) {
-        requestContactVCard(bareJid);
+        const QByteArray photoHash = presence.photoHash();
+        const bool photoChanged = !photoHash.isEmpty() && m_contactPhotoHashes.value(bareJid) != photoHash;
+        if (photoChanged) {
+            m_contactPhotoHashes.insert(bareJid, photoHash);
+        }
+        if (photoChanged || !m_loadedContactVCards.contains(bareJid)) {
+            requestContactVCard(bareJid, photoChanged);
+        }
+    } else if (presence.vCardUpdateType() == QXmppPresence::VCardUpdateNoPhoto) {
+        m_contactPhotoHashes.remove(bareJid);
+        if (!m_chats.value(bareJid).avatar.isNull()) {
+            m_chats[bareJid].avatar = QImage();
+        }
     }
     logDebug(QStringLiteral("Presence update from %1: %2").arg(bareJid, m_chats.value(bareJid).subtitle));
     emit chatsChanged();

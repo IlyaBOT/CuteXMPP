@@ -1,0 +1,161 @@
+name: Build Client
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+env:
+  APP_NAME: CuteXMPP
+  QT_VERSION: 6.8.3
+  QXMPP_VERSION: 1.14.4
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qca-qt6
+            mingw-w64-ucrt-x86_64-qxmpp
+
+      - name: Configure
+        shell: pwsh
+        run: cmake --fresh --preset windows-release
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset windows-release --parallel
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/ci/package_windows.ps1 -BuildDir build/windows-release -DistDir dist/windows
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CuteXMPP-windows-x64
+          if-no-files-found: error
+          path: dist/windows/CuteXMPP-windows-x64.zip
+
+  linux-x64:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            curl \
+            desktop-file-utils \
+            libfuse2 \
+            ninja-build \
+            patchelf
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: gcc_64
+          cache: true
+
+      - name: Build static QXmpp
+        id: qxmpp
+        shell: bash
+        run: bash scripts/ci/build_qxmpp.sh
+
+      - name: Configure
+        shell: bash
+        run: >
+          cmake --fresh --preset linux-release
+          -DCMAKE_PREFIX_PATH="${{ steps.qxmpp.outputs.qt_prefix_path }};${{ steps.qxmpp.outputs.install_prefix }}"
+
+      - name: Build
+        shell: bash
+        run: cmake --build --preset linux-release --parallel
+
+      - name: Package
+        shell: bash
+        env:
+          QMAKE_BIN: ${{ steps.qxmpp.outputs.qmake_bin }}
+        run: bash scripts/ci/package_linux.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CuteXMPP-linux-x64
+          if-no-files-found: error
+          path: |
+            dist/linux/CuteXMPP-linux-x64.AppImage
+            dist/linux/CuteXMPP-linux-x64.tar.gz
+
+  macos-x64:
+    name: macOS x64
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+
+      - name: Build static QXmpp
+        id: qxmpp
+        shell: bash
+        run: bash scripts/ci/build_qxmpp.sh
+
+      - name: Configure
+        shell: bash
+        run: >
+          cmake --fresh --preset macos-release
+          -DCMAKE_PREFIX_PATH="${{ steps.qxmpp.outputs.qt_prefix_path }};${{ steps.qxmpp.outputs.install_prefix }}"
+
+      - name: Build
+        shell: bash
+        run: cmake --build --preset macos-release --parallel
+
+      - name: Package
+        shell: bash
+        run: bash scripts/ci/package_macos.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CuteXMPP-macos-x64
+          if-no-files-found: error
+          path: |
+            dist/macos/CuteXMPP.app
+            dist/macos/CuteXMPP-macos-x64.dmg

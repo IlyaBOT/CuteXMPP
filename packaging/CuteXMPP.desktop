@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=CuteXMPP
+GenericName=XMPP Client
+Comment=Cross-platform XMPP desktop client
+Exec=CuteXMPP
+Icon=CuteXMPP
+Categories=Network;Chat;InstantMessaging;Qt;
+Keywords=xmpp;chat;messaging;qt;
+Terminal=false
+StartupWMClass=CuteXMPP

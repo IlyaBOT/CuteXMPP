@@ -22,6 +22,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSplitter>
@@ -388,31 +389,67 @@ void MainWindow::rebuildWorkspaceButtons()
 
 void MainWindow::rebuildChatList()
 {
-    const QString selectedChatId = m_currentChatId;
     const QVector<ChatSummary> chats = filteredChats();
+    const QString selectedChatId = m_currentChatId;
+    QString targetChatId = selectedChatId;
 
-    m_chatListWidget->clear();
-    for (const ChatSummary& chat : chats) {
-        auto* item = new QListWidgetItem;
-        item->setData(Qt::UserRole, chat.id);
-        item->setSizeHint(QSize(0, 80));
+    {
+        const QSignalBlocker blocker(m_chatListWidget);
+        m_chatListWidget->clear();
+        for (const ChatSummary& chat : chats) {
+            auto* item = new QListWidgetItem;
+            item->setData(Qt::UserRole, chat.id);
+            item->setSizeHint(QSize(0, 80));
 
-        auto* widget = new ChatListItemWidget(m_chatListWidget);
-        widget->setChat(chat, m_theme, chat.id == selectedChatId);
-        m_chatListWidget->addItem(item);
-        m_chatListWidget->setItemWidget(item, widget);
+            auto* widget = new ChatListItemWidget(m_chatListWidget);
+            widget->setChat(chat, m_theme, false);
+            m_chatListWidget->addItem(item);
+            m_chatListWidget->setItemWidget(item, widget);
+        }
+
+        QListWidgetItem* targetItem = nullptr;
+        if (!selectedChatId.isEmpty()) {
+            for (int row = 0; row < m_chatListWidget->count(); ++row) {
+                auto* item = m_chatListWidget->item(row);
+                if (item->data(Qt::UserRole).toString() == selectedChatId) {
+                    targetItem = item;
+                    break;
+                }
+            }
+        }
+
+        if (!targetItem && m_chatListWidget->count() > 0) {
+            targetItem = m_chatListWidget->item(0);
+            targetChatId = targetItem->data(Qt::UserRole).toString();
+        } else if (!targetItem) {
+            targetChatId.clear();
+        }
+
+        m_chatListWidget->setCurrentItem(targetItem);
     }
 
-    if (!selectedChatId.isEmpty()) {
-        selectChatById(selectedChatId);
-    }
-    if (m_chatListWidget->currentItem() == nullptr) {
-        selectFirstVisibleChat();
+    if (targetChatId != m_currentChatId) {
+        m_currentChatId = targetChatId;
+        if (!m_currentChatId.isEmpty()) {
+            m_service->markChatRead(m_currentChatId);
+            m_scrollToBottomOnNextRender = true;
+            m_service->ensureConversationLoaded(m_currentChatId);
+        }
+        refreshChatListWidgets(chats);
+        refreshHeader();
+        rebuildMessages();
+    } else if (m_currentChatId.isEmpty()) {
+        refreshChatListWidgets(chats);
+        refreshHeader();
+        rebuildMessages();
+    } else {
+        refreshChatListWidgets(chats);
     }
 }
 
 void MainWindow::rebuildMessages()
 {
+    m_suppressHistoryAutoLoad = true;
     auto* scrollBar = m_messageScrollArea->verticalScrollBar();
     m_previousScrollValue = scrollBar->value();
     m_previousScrollMaximum = scrollBar->maximum();
@@ -426,6 +463,7 @@ void MainWindow::rebuildMessages()
         placeholder->setObjectName("HeaderMeta");
         placeholder->setAlignment(Qt::AlignCenter);
         m_messageLayout->insertWidget(0, placeholder);
+        m_suppressHistoryAutoLoad = false;
         return;
     }
 
@@ -439,6 +477,7 @@ void MainWindow::rebuildMessages()
         placeholder->setObjectName("HeaderMeta");
         placeholder->setAlignment(Qt::AlignCenter);
         m_messageLayout->insertWidget(0, placeholder);
+        m_suppressHistoryAutoLoad = false;
         return;
     }
 
@@ -449,7 +488,6 @@ void MainWindow::renderNextMessageChunk()
 {
     if (m_renderIndex >= m_renderQueue.size()) {
         auto* scrollBar = m_messageScrollArea->verticalScrollBar();
-        m_suppressHistoryAutoLoad = true;
         if (m_scrollToBottomOnNextRender) {
             scrollBar->setValue(scrollBar->maximum());
         } else if (m_lastRenderedChatId == m_renderChat.id && m_previousScrollValue <= 32 && m_renderQueue.size() > m_lastRenderedMessageCount) {
@@ -475,6 +513,25 @@ void MainWindow::renderNextMessageChunk()
     }
 
     QTimer::singleShot(0, this, &MainWindow::renderNextMessageChunk);
+}
+
+void MainWindow::refreshChatListWidgets(const QVector<ChatSummary>& chats)
+{
+    for (int row = 0; row < m_chatListWidget->count(); ++row) {
+        QListWidgetItem* item = m_chatListWidget->item(row);
+        auto* widget = static_cast<ChatListItemWidget*>(m_chatListWidget->itemWidget(item));
+        if (!widget) {
+            continue;
+        }
+
+        const QString chatId = item->data(Qt::UserRole).toString();
+        for (const ChatSummary& chat : chats) {
+            if (chat.id == chatId) {
+                widget->setChat(chat, m_theme, chatId == m_currentChatId);
+                break;
+            }
+        }
+    }
 }
 
 void MainWindow::clearLayout(QLayout* layout)
@@ -509,22 +566,7 @@ void MainWindow::handleChatSelectionChanged(QListWidgetItem* current, QListWidge
     refreshHeader();
     rebuildMessages();
 
-    for (int row = 0; row < m_chatListWidget->count(); ++row) {
-        QListWidgetItem* item = m_chatListWidget->item(row);
-        auto* widget = static_cast<ChatListItemWidget*>(m_chatListWidget->itemWidget(item));
-        if (!widget) {
-            continue;
-        }
-
-        const QString chatId = item->data(Qt::UserRole).toString();
-        const auto chats = filteredChats();
-        for (const ChatSummary& chat : chats) {
-            if (chat.id == chatId) {
-                widget->setChat(chat, m_theme, chatId == m_currentChatId);
-                break;
-            }
-        }
-    }
+    refreshChatListWidgets(filteredChats());
 }
 
 void MainWindow::sendCurrentMessage()

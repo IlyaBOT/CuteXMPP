@@ -65,6 +65,7 @@ QString buildApplicationStyleSheet(const ThemePalette& theme)
                "QWidget#AuthPage QPushButton { padding: 5px 12px; min-height: 28px; }"
                "QWidget#AuthPage QPushButton#AuthToggleButton { padding: 3px 10px; min-height: 24px; }"
                "QLabel { background: transparent; }"
+               "QWidget#ChatListTextColumn { background: transparent; border: none; }"
                "QLabel#MutedLabel { color: %9; }"
                "QLabel#ChatListTitle { color: #ffffff; background: transparent; }"
                "QLabel#ChatListPreview { color: %9; background: transparent; }"

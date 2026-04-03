@@ -405,6 +405,8 @@ ChatListItemWidget::ChatListItemWidget(QWidget* parent)
     m_avatarLabel->setFixedSize(64, 64);
 
     auto* textColumn = new QWidget(this);
+    textColumn->setObjectName("ChatListTextColumn");
+    textColumn->setAttribute(Qt::WA_StyledBackground, true);
     auto* textLayout = new QVBoxLayout(textColumn);
     textLayout->setContentsMargins(0, 8, 0, 8);
     textLayout->setSpacing(0);

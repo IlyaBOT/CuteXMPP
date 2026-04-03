@@ -47,6 +47,7 @@ private:
     void rebuildChatList();
     void rebuildMessages();
     void renderNextMessageChunk();
+    void refreshChatListWidgets(const QVector<ChatSummary>& chats);
     void clearLayout(QLayout* layout);
     void handleChatSelectionChanged(QListWidgetItem* current, QListWidgetItem* previous);
     void sendCurrentMessage();

@@ -48,11 +48,17 @@ Use the matching `linux-*` or `macos-*` preset on other platforms.
 
 ## GitHub CI readiness
 
-The project is already organized around stable CMake preset names and deterministic build directories, so the same preset commands can be reused later in GitHub Actions.
+GitHub Actions workflow: `.github/workflows/build-client.yml`
 
-Recommended Windows CI steps:
+It produces:
+- Windows x64: `CuteXMPP-windows-x64.zip`
+- Linux x64: `CuteXMPP-linux-x64.AppImage` and `CuteXMPP-linux-x64.tar.gz`
+- macOS x64: `CuteXMPP.app` and `CuteXMPP-macos-x64.dmg`
 
-```powershell
-cmake --fresh --preset windows-debug
-cmake --build --preset windows-debug --parallel
-```
+Windows CI uses MSYS2 UCRT64 packages for Qt 6, QCA, and QXmpp.
+Linux and macOS CI install Qt with `install-qt-action` and build QXmpp `1.14.4` from source as a static library through `scripts/ci/build_qxmpp.sh`, which keeps Linux/macOS packaging simpler.
+
+Packaging helpers:
+- `scripts/ci/package_windows.ps1`
+- `scripts/ci/package_linux.sh`
+- `scripts/ci/package_macos.sh`
