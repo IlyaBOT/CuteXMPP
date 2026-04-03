@@ -1,0 +1,13 @@
+build/
+.idea/
+.vscode/
+*.user
+*.user.*
+*.obj
+*.o
+*.pdb
+*.ilk
+*.log
+*.pyc
+__pycache__/
+.DS_Store

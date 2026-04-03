@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="icons/cutexmpp-logo.png">../assets/cutexmpp-logo.png</file>
+    </qresource>
+</RCC>

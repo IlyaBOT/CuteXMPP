@@ -1,0 +1,111 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ninja-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CUTE_XMPP_WARNINGS_AS_ERRORS": "OFF",
+        "CUTE_XMPP_ENABLE_LTO": "OFF"
+      }
+    },
+    {
+      "name": "windows-msys2-ucrt64-base",
+      "hidden": true,
+      "inherits": "ninja-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "C:/msys64/ucrt64",
+        "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/ucrt64/bin/ninja.exe"
+      },
+      "environment": {
+        "PATH": "C:/msys64/ucrt64/bin;$penv{PATH}"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "inherits": "windows-msys2-ucrt64-base",
+      "displayName": "Windows Debug (MSYS2 UCRT64)",
+      "description": "Debug build for Windows using Qt6 from MSYS2 UCRT64"
+    },
+    {
+      "name": "windows-release",
+      "inherits": "windows-msys2-ucrt64-base",
+      "displayName": "Windows Release (MSYS2 UCRT64)",
+      "description": "Release build for Windows using Qt6 from MSYS2 UCRT64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUTE_XMPP_ENABLE_LTO": "ON"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "inherits": "ninja-base",
+      "displayName": "Linux Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "inherits": "ninja-base",
+      "displayName": "Linux Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUTE_XMPP_ENABLE_LTO": "ON"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "ninja-base",
+      "displayName": "macOS Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "macos-release",
+      "inherits": "ninja-base",
+      "displayName": "macOS Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CUTE_XMPP_ENABLE_LTO": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    }
+  ]
+}
