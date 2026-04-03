@@ -117,7 +117,7 @@ jobs:
 
   macos-x64:
     name: macOS x64
-    runs-on: macos-13
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
