@@ -14,6 +14,7 @@ LINUXDEPLOY_PLUGIN_APPIMAGE_URL="${LINUXDEPLOY_PLUGIN_APPIMAGE_URL:-https://gith
 PROJECT_VERSION="${PROJECT_VERSION:-$(sed -n 's/^project(CuteXMPP VERSION \([0-9.]*\).*/\1/p' "${ROOT_DIR}/CMakeLists.txt")}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
 QT_ROOT_DIR="${QT_ROOT_DIR:-}"
+QT_LIB_DIR="${QT_LIB_DIR:-}"
 QXMPP_INSTALL_PREFIX="${QXMPP_INSTALL_PREFIX:-}"
 TOOLS_DIR="${DIST_DIR}/tools"
 LINUXDEPLOY_APPIMAGE="${TOOLS_DIR}/linuxdeploy-x86_64.AppImage"
@@ -38,6 +39,16 @@ if [[ -z "${QMAKE_BIN}" ]]; then
             break
         fi
     done
+fi
+
+if [[ -z "${QT_LIB_DIR}" ]]; then
+    if [[ -n "${QMAKE_BIN}" ]]; then
+        QT_LIB_DIR="$("${QMAKE_BIN}" -query QT_INSTALL_LIBS 2>/dev/null || true)"
+    fi
+fi
+
+if [[ -z "${QT_LIB_DIR}" && -n "${QT_ROOT_DIR}" && -d "${QT_ROOT_DIR}/lib" ]]; then
+    QT_LIB_DIR="${QT_ROOT_DIR}/lib"
 fi
 
 if [[ -z "${QMAKE_BIN}" ]]; then
@@ -100,11 +111,18 @@ export VERSION="${PROJECT_VERSION:-0.1.0}"
 export APPIMAGE_EXTRACT_AND_RUN=1
 export ARCH="${ARCH:-x86_64}"
 export PATH="${TOOLS_DIR}:${PATH}"
+LD_LIBRARY_PATH_ENTRIES=("${APPDIR}/usr/lib")
 if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
-    export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${QXMPP_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-else
-    export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
+    LD_LIBRARY_PATH_ENTRIES+=("${QXMPP_INSTALL_PREFIX}/lib")
 fi
+if [[ -n "${QT_LIB_DIR}" && -d "${QT_LIB_DIR}" ]]; then
+    LD_LIBRARY_PATH_ENTRIES+=("${QT_LIB_DIR}")
+fi
+if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+    LD_LIBRARY_PATH_ENTRIES+=("${LD_LIBRARY_PATH}")
+fi
+export LD_LIBRARY_PATH
+LD_LIBRARY_PATH="$(IFS=:; echo "${LD_LIBRARY_PATH_ENTRIES[*]}")"
 
 pushd "${DIST_DIR}" >/dev/null
 rm -f "${DIST_DIR}"/*.AppImage
