@@ -11,6 +11,7 @@ DESKTOP_FILE_SOURCE="${DESKTOP_FILE_SOURCE:-${ROOT_DIR}/packaging/CuteXMPP.deskt
 LINUXDEPLOYQT_URL="${LINUXDEPLOYQT_URL:-https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage}"
 PROJECT_VERSION="${PROJECT_VERSION:-$(sed -n 's/^project(CuteXMPP VERSION \([0-9.]*\).*/\1/p' "${ROOT_DIR}/CMakeLists.txt")}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
+QT_ROOT_DIR="${QT_ROOT_DIR:-}"
 LINUXDEPLOYQT_BIN="${DIST_DIR}/tools/linuxdeployqt.AppImage"
 TARGET_BINARY="${BUILD_DIR}/${APP_NAME}"
 APPIMAGE_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.AppImage"
@@ -19,6 +20,15 @@ TARBALL_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.tar.gz"
 if [[ ! -f "${TARGET_BINARY}" ]]; then
     echo "[ERROR] Build output is missing: ${TARGET_BINARY}" >&2
     exit 1
+fi
+
+if [[ -z "${QMAKE_BIN}" ]]; then
+    for candidate in "${QT_ROOT_DIR}/bin/qmake6" "${QT_ROOT_DIR}/bin/qmake"; do
+        if [[ -x "${candidate}" ]]; then
+            QMAKE_BIN="${candidate}"
+            break
+        fi
+    done
 fi
 
 if [[ -z "${QMAKE_BIN}" ]]; then

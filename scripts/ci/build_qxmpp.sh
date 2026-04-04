@@ -10,19 +10,42 @@ SOURCE_DIR="${SOURCE_ROOT}/qxmpp-v${QXMPP_VERSION}"
 BUILD_DIR="${BUILD_DIR:-${WORK_DIR}/build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${WORK_DIR}/install}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
+QT_ROOT_DIR="${QT_ROOT_DIR:-}"
+QT_PREFIX_PATH="${QT_PREFIX_PATH:-}"
+QXMPP_BUILD_SHARED="${QXMPP_BUILD_SHARED:-OFF}"
+
+if [[ -z "${QMAKE_BIN}" && -n "${QT_ROOT_DIR}" ]]; then
+    for candidate in "${QT_ROOT_DIR}/bin/qmake6" "${QT_ROOT_DIR}/bin/qmake"; do
+        if [[ -x "${candidate}" ]]; then
+            QMAKE_BIN="${candidate}"
+            break
+        fi
+    done
+fi
 
 if [[ -z "${QMAKE_BIN}" ]]; then
     if command -v qmake6 >/dev/null 2>&1; then
         QMAKE_BIN="$(command -v qmake6)"
     elif command -v qmake >/dev/null 2>&1; then
         QMAKE_BIN="$(command -v qmake)"
-    else
+    elif [[ -z "${QT_PREFIX_PATH}" && -z "${QT_ROOT_DIR}" ]]; then
         echo "[ERROR] qmake was not found in PATH." >&2
         exit 1
     fi
 fi
 
-QT_PREFIX_PATH="${QT_PREFIX_PATH:-$("${QMAKE_BIN}" -query QT_INSTALL_PREFIX)}"
+if [[ -z "${QT_PREFIX_PATH}" && -n "${QMAKE_BIN}" ]]; then
+    QT_PREFIX_PATH="$("${QMAKE_BIN}" -query QT_INSTALL_PREFIX)"
+fi
+
+if [[ -z "${QT_PREFIX_PATH}" && -n "${QT_ROOT_DIR}" ]]; then
+    QT_PREFIX_PATH="${QT_ROOT_DIR}"
+fi
+
+if [[ -z "${QT_PREFIX_PATH}" ]]; then
+    echo "[ERROR] Failed to resolve QT_PREFIX_PATH." >&2
+    exit 1
+fi
 
 mkdir -p "${WORK_DIR}" "${SOURCE_ROOT}"
 
@@ -40,7 +63,7 @@ cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
     -DCMAKE_PREFIX_PATH="${QT_PREFIX_PATH}" \
     -DBUILD_WITH_QT6=ON \
-    -DBUILD_SHARED=OFF \
+    -DBUILD_SHARED="${QXMPP_BUILD_SHARED}" \
     -DBUILD_TESTS=OFF \
     -DBUILD_DOCUMENTATION=OFF \
     -DBUILD_EXAMPLES=OFF \
