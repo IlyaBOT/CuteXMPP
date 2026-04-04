@@ -8,12 +8,12 @@ DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist/linux}"
 APPDIR="${APPDIR:-${DIST_DIR}/${APP_NAME}.AppDir}"
 ICON_FILE="${ICON_FILE:-${ROOT_DIR}/assets/cutexmpp-logo.png}"
 DESKTOP_FILE_SOURCE="${DESKTOP_FILE_SOURCE:-${ROOT_DIR}/packaging/CuteXMPP.desktop}"
-LINUXDEPLOYQT_URL="${LINUXDEPLOYQT_URL:-https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage}"
+APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/probonopd/go-appimage/releases/download/continuous/appimagetool-x86_64.AppImage}"
 PROJECT_VERSION="${PROJECT_VERSION:-$(sed -n 's/^project(CuteXMPP VERSION \([0-9.]*\).*/\1/p' "${ROOT_DIR}/CMakeLists.txt")}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
 QT_ROOT_DIR="${QT_ROOT_DIR:-}"
 QXMPP_INSTALL_PREFIX="${QXMPP_INSTALL_PREFIX:-}"
-LINUXDEPLOYQT_BIN="${DIST_DIR}/tools/linuxdeployqt.AppImage"
+APPIMAGETOOL_BIN="${DIST_DIR}/tools/appimagetool-x86_64.AppImage"
 TARGET_BINARY="${BUILD_DIR}/${APP_NAME}"
 APPIMAGE_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.AppImage"
 TARBALL_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.tar.gz"
@@ -55,6 +55,17 @@ cp "${TARGET_BINARY}" "${APPDIR}/usr/bin/${APP_NAME}"
 chmod +x "${APPDIR}/usr/bin/${APP_NAME}"
 cp "${DESKTOP_FILE_SOURCE}" "${APPDIR}/usr/share/applications/${APP_NAME}.desktop"
 cp "${ICON_FILE}" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
+cp "${DESKTOP_FILE_SOURCE}" "${APPDIR}/${APP_NAME}.desktop"
+cp "${ICON_FILE}" "${APPDIR}/.DirIcon"
+
+cat > "${APPDIR}/AppRun" <<EOF
+#!/usr/bin/env bash
+set -e
+HERE="\$(cd "\$(dirname "\$0")" && pwd)"
+export LD_LIBRARY_PATH="\${HERE}/usr/lib:\${LD_LIBRARY_PATH:-}"
+exec "\${HERE}/usr/bin/${APP_NAME}" "\$@"
+EOF
+chmod +x "${APPDIR}/AppRun"
 
 if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
     while IFS= read -r shared_lib; do
@@ -63,31 +74,29 @@ if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
 fi
 
 curl --fail --location --retry 5 --retry-delay 5 \
-    --output "${LINUXDEPLOYQT_BIN}" \
-    "${LINUXDEPLOYQT_URL}"
-chmod +x "${LINUXDEPLOYQT_BIN}"
+    --output "${APPIMAGETOOL_BIN}" \
+    "${APPIMAGETOOL_URL}"
+chmod +x "${APPIMAGETOOL_BIN}"
 
 export QMAKE="${QMAKE_BIN}"
 export VERSION="${PROJECT_VERSION:-0.1.0}"
 export APPIMAGE_EXTRACT_AND_RUN=1
+export ARCH="${ARCH:-x86_64}"
 if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
-    export LD_LIBRARY_PATH="${QXMPP_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${QXMPP_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+else
+    export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
 fi
 
 pushd "${DIST_DIR}" >/dev/null
-"${LINUXDEPLOYQT_BIN}" "${APPDIR}/usr/share/applications/${APP_NAME}.desktop" \
-    -bundle-non-qt-libs \
-    -unsupported-allow-new-glibc \
-    -appimage \
-    -verbose=2
+"${APPIMAGETOOL_BIN}" -s deploy "${APPDIR}/${APP_NAME}.desktop"
+"${APPIMAGETOOL_BIN}" "${APPDIR}" "${APPIMAGE_OUTPUT}"
 
-generated_appimage="$(find "${DIST_DIR}" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
-if [[ -z "${generated_appimage}" ]]; then
-    echo "[ERROR] linuxdeployqt did not produce an AppImage." >&2
+if [[ ! -f "${APPIMAGE_OUTPUT}" ]]; then
+    echo "[ERROR] appimagetool did not produce an AppImage." >&2
     exit 1
 fi
 
-mv "${generated_appimage}" "${APPIMAGE_OUTPUT}"
 tar -C "${DIST_DIR}" -czf "${TARBALL_OUTPUT}" "$(basename "${APPDIR}")"
 popd >/dev/null
 

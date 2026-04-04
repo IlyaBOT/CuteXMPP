@@ -82,7 +82,8 @@ jobs:
             mesa-common-dev \
             ninja-build \
             patchelf \
-            p7zip-full
+            p7zip-full \
+            squashfs-tools
 
       - name: Install Qt with aqt
         shell: bash
