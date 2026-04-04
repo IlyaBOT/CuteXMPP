@@ -76,6 +76,10 @@ jobs:
             curl \
             desktop-file-utils \
             libfuse2 \
+            libgl1-mesa-dev \
+            libglx-dev \
+            libopengl-dev \
+            mesa-common-dev \
             ninja-build \
             patchelf \
             p7zip-full
@@ -107,6 +111,7 @@ jobs:
         shell: bash
         run: >
           cmake --fresh --preset linux-release
+          -DOpenGL_GL_PREFERENCE=LEGACY
           -DCMAKE_PREFIX_PATH="${{ steps.qxmpp.outputs.qt_prefix_path }};${{ steps.qxmpp.outputs.install_prefix }}"
 
       - name: Build
