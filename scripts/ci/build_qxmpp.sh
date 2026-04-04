@@ -58,6 +58,23 @@ fi
 rm -rf "${SOURCE_DIR}" "${BUILD_DIR}" "${INSTALL_PREFIX}"
 tar -xzf "${ARCHIVE_PATH}" -C "${SOURCE_ROOT}"
 
+# QXmpp 1.14.4 ships deprecated compat translation units that fail to compile
+# on the GitHub Ubuntu runner toolchain (GCC 11 + Qt 6.8). CuteXMPP does not
+# use those removed APIs, so we exclude the compat sources from the CI build.
+python3 - "${SOURCE_DIR}/src/CMakeLists.txt" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+for needle in (
+    "    base/compat/removed_api.cpp\n",
+    "    client/compat/removed_api.cpp\n",
+):
+    text = text.replace(needle, "")
+path.write_text(text, encoding="utf-8")
+PY
+
 cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
