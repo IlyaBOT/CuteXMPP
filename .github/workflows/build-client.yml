@@ -28,6 +28,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
+          msys2-location: C:\msys64
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc
@@ -74,16 +75,17 @@ jobs:
             desktop-file-utils \
             libfuse2 \
             ninja-build \
-            patchelf
+            patchelf \
+            p7zip-full
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          host: linux
-          target: desktop
-          arch: gcc_64
-          cache: true
+      - name: Install Qt with aqt
+        shell: bash
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "aqtinstall==3.3.0"
+          python3 -m aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 --outputdir "${GITHUB_WORKSPACE}/Qt" --external 7z
+          echo "QT_ROOT_DIR=${GITHUB_WORKSPACE}/Qt/${QT_VERSION}/linux_gcc_64" >> "${GITHUB_ENV}"
+          echo "${GITHUB_WORKSPACE}/Qt/${QT_VERSION}/linux_gcc_64/bin" >> "${GITHUB_PATH}"
 
       - name: Build static QXmpp
         id: qxmpp
