@@ -8,12 +8,20 @@ DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist/linux}"
 APPDIR="${APPDIR:-${DIST_DIR}/${APP_NAME}.AppDir}"
 ICON_FILE="${ICON_FILE:-${ROOT_DIR}/assets/cutexmpp-logo.png}"
 DESKTOP_FILE_SOURCE="${DESKTOP_FILE_SOURCE:-${ROOT_DIR}/packaging/CuteXMPP.desktop}"
-APPIMAGETOOL_URL="${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage}"
+LINUXDEPLOY_URL="${LINUXDEPLOY_URL:-https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage}"
+LINUXDEPLOY_PLUGIN_QT_URL="${LINUXDEPLOY_PLUGIN_QT_URL:-https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage}"
+LINUXDEPLOY_PLUGIN_APPIMAGE_URL="${LINUXDEPLOY_PLUGIN_APPIMAGE_URL:-https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage}"
 PROJECT_VERSION="${PROJECT_VERSION:-$(sed -n 's/^project(CuteXMPP VERSION \([0-9.]*\).*/\1/p' "${ROOT_DIR}/CMakeLists.txt")}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
 QT_ROOT_DIR="${QT_ROOT_DIR:-}"
 QXMPP_INSTALL_PREFIX="${QXMPP_INSTALL_PREFIX:-}"
-APPIMAGETOOL_BIN="${DIST_DIR}/tools/appimagetool-x86_64.AppImage"
+TOOLS_DIR="${DIST_DIR}/tools"
+LINUXDEPLOY_APPIMAGE="${TOOLS_DIR}/linuxdeploy-x86_64.AppImage"
+LINUXDEPLOY_PLUGIN_QT_APPIMAGE="${TOOLS_DIR}/linuxdeploy-plugin-qt-x86_64.AppImage"
+LINUXDEPLOY_PLUGIN_APPIMAGE_APPIMAGE="${TOOLS_DIR}/linuxdeploy-plugin-appimage-x86_64.AppImage"
+LINUXDEPLOY_BIN="${TOOLS_DIR}/linuxdeploy"
+LINUXDEPLOY_PLUGIN_QT_BIN="${TOOLS_DIR}/linuxdeploy-plugin-qt"
+LINUXDEPLOY_PLUGIN_APPIMAGE_BIN="${TOOLS_DIR}/linuxdeploy-plugin-appimage"
 TARGET_BINARY="${BUILD_DIR}/${APP_NAME}"
 APPIMAGE_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.AppImage"
 TARBALL_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.tar.gz"
@@ -49,7 +57,7 @@ mkdir -p \
     "${APPDIR}/usr/lib" \
     "${APPDIR}/usr/share/applications" \
     "${APPDIR}/usr/share/icons/hicolor/256x256/apps" \
-    "${DIST_DIR}/tools"
+    "${TOOLS_DIR}"
 
 cp "${TARGET_BINARY}" "${APPDIR}/usr/bin/${APP_NAME}"
 chmod +x "${APPDIR}/usr/bin/${APP_NAME}"
@@ -74,14 +82,24 @@ if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
 fi
 
 curl --fail --location --retry 5 --retry-delay 5 \
-    --output "${APPIMAGETOOL_BIN}" \
-    "${APPIMAGETOOL_URL}"
-chmod +x "${APPIMAGETOOL_BIN}"
+    --output "${LINUXDEPLOY_APPIMAGE}" \
+    "${LINUXDEPLOY_URL}"
+curl --fail --location --retry 5 --retry-delay 5 \
+    --output "${LINUXDEPLOY_PLUGIN_QT_APPIMAGE}" \
+    "${LINUXDEPLOY_PLUGIN_QT_URL}"
+curl --fail --location --retry 5 --retry-delay 5 \
+    --output "${LINUXDEPLOY_PLUGIN_APPIMAGE_APPIMAGE}" \
+    "${LINUXDEPLOY_PLUGIN_APPIMAGE_URL}"
+chmod +x "${LINUXDEPLOY_APPIMAGE}" "${LINUXDEPLOY_PLUGIN_QT_APPIMAGE}" "${LINUXDEPLOY_PLUGIN_APPIMAGE_APPIMAGE}"
+ln -sf "$(basename "${LINUXDEPLOY_APPIMAGE}")" "${LINUXDEPLOY_BIN}"
+ln -sf "$(basename "${LINUXDEPLOY_PLUGIN_QT_APPIMAGE}")" "${LINUXDEPLOY_PLUGIN_QT_BIN}"
+ln -sf "$(basename "${LINUXDEPLOY_PLUGIN_APPIMAGE_APPIMAGE}")" "${LINUXDEPLOY_PLUGIN_APPIMAGE_BIN}"
 
 export QMAKE="${QMAKE_BIN}"
 export VERSION="${PROJECT_VERSION:-0.1.0}"
 export APPIMAGE_EXTRACT_AND_RUN=1
 export ARCH="${ARCH:-x86_64}"
+export PATH="${TOOLS_DIR}:${PATH}"
 if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
     export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${QXMPP_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 else
@@ -89,11 +107,25 @@ else
 fi
 
 pushd "${DIST_DIR}" >/dev/null
-"${APPIMAGETOOL_BIN}" -s deploy "${APPDIR}/${APP_NAME}.desktop"
-"${APPIMAGETOOL_BIN}" "${APPDIR}" "${APPIMAGE_OUTPUT}"
+rm -f "${DIST_DIR}"/*.AppImage
+"${LINUXDEPLOY_BIN}" \
+    --appdir "${APPDIR}" \
+    -e "${APPDIR}/usr/bin/${APP_NAME}" \
+    -d "${APPDIR}/${APP_NAME}.desktop" \
+    -i "${APPDIR}/.DirIcon" \
+    --plugin qt \
+    --output appimage
+
+GENERATED_APPIMAGE="$(find "${DIST_DIR}" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)"
+if [[ -z "${GENERATED_APPIMAGE}" ]]; then
+    echo "[ERROR] linuxdeploy did not produce an AppImage." >&2
+    exit 1
+fi
+
+mv -f "${GENERATED_APPIMAGE}" "${APPIMAGE_OUTPUT}"
 
 if [[ ! -f "${APPIMAGE_OUTPUT}" ]]; then
-    echo "[ERROR] appimagetool did not produce an AppImage." >&2
+    echo "[ERROR] linuxdeploy did not produce an AppImage." >&2
     exit 1
 fi
 
