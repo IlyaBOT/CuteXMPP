@@ -12,6 +12,7 @@ LINUXDEPLOYQT_URL="${LINUXDEPLOYQT_URL:-https://github.com/probonopd/linuxdeploy
 PROJECT_VERSION="${PROJECT_VERSION:-$(sed -n 's/^project(CuteXMPP VERSION \([0-9.]*\).*/\1/p' "${ROOT_DIR}/CMakeLists.txt")}"
 QMAKE_BIN="${QMAKE_BIN:-${QMAKE:-}}"
 QT_ROOT_DIR="${QT_ROOT_DIR:-}"
+QXMPP_INSTALL_PREFIX="${QXMPP_INSTALL_PREFIX:-}"
 LINUXDEPLOYQT_BIN="${DIST_DIR}/tools/linuxdeployqt.AppImage"
 TARGET_BINARY="${BUILD_DIR}/${APP_NAME}"
 APPIMAGE_OUTPUT="${DIST_DIR}/${APP_NAME}-linux-x64.AppImage"
@@ -45,6 +46,7 @@ fi
 rm -rf "${DIST_DIR}"
 mkdir -p \
     "${APPDIR}/usr/bin" \
+    "${APPDIR}/usr/lib" \
     "${APPDIR}/usr/share/applications" \
     "${APPDIR}/usr/share/icons/hicolor/256x256/apps" \
     "${DIST_DIR}/tools"
@@ -54,6 +56,12 @@ chmod +x "${APPDIR}/usr/bin/${APP_NAME}"
 cp "${DESKTOP_FILE_SOURCE}" "${APPDIR}/usr/share/applications/${APP_NAME}.desktop"
 cp "${ICON_FILE}" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
 
+if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
+    while IFS= read -r shared_lib; do
+        cp -a "${shared_lib}" "${APPDIR}/usr/lib/"
+    done < <(find "${QXMPP_INSTALL_PREFIX}/lib" -maxdepth 1 \( -type f -o -type l \) \( -name 'libQXmppQt6*.so*' -o -name 'libQXmpp*.so*' \) | sort -u)
+fi
+
 curl --fail --location --retry 5 --retry-delay 5 \
     --output "${LINUXDEPLOYQT_BIN}" \
     "${LINUXDEPLOYQT_URL}"
@@ -62,6 +70,9 @@ chmod +x "${LINUXDEPLOYQT_BIN}"
 export QMAKE="${QMAKE_BIN}"
 export VERSION="${PROJECT_VERSION:-0.1.0}"
 export APPIMAGE_EXTRACT_AND_RUN=1
+if [[ -n "${QXMPP_INSTALL_PREFIX}" && -d "${QXMPP_INSTALL_PREFIX}/lib" ]]; then
+    export LD_LIBRARY_PATH="${QXMPP_INSTALL_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+fi
 
 pushd "${DIST_DIR}" >/dev/null
 "${LINUXDEPLOYQT_BIN}" "${APPDIR}/usr/share/applications/${APP_NAME}.desktop" \

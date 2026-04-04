@@ -96,9 +96,11 @@ jobs:
           echo "${qt_root_dir}/bin" >> "${GITHUB_PATH}"
           echo "[INFO] Qt root: ${qt_root_dir}"
 
-      - name: Build static QXmpp
+      - name: Build QXmpp
         id: qxmpp
         shell: bash
+        env:
+          QXMPP_BUILD_SHARED: ON
         run: bash scripts/ci/build_qxmpp.sh
 
       - name: Configure
@@ -116,6 +118,7 @@ jobs:
         env:
           QMAKE_BIN: ${{ steps.qxmpp.outputs.qmake_bin }}
           QT_ROOT_DIR: ${{ env.QT_ROOT_DIR }}
+          QXMPP_INSTALL_PREFIX: ${{ steps.qxmpp.outputs.install_prefix }}
         run: bash scripts/ci/package_linux.sh
 
       - name: Upload artifacts
@@ -129,7 +132,7 @@ jobs:
 
   macos-x64:
     name: macOS x64
-    runs-on: macos-13
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout
@@ -144,7 +147,7 @@ jobs:
           arch: clang_64
           cache: true
 
-      - name: Build static QXmpp
+      - name: Build QXmpp
         id: qxmpp
         shell: bash
         env:
