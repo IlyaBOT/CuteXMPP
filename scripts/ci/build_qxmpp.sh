@@ -58,31 +58,36 @@ fi
 rm -rf "${SOURCE_DIR}" "${BUILD_DIR}" "${INSTALL_PREFIX}"
 tar -xzf "${ARCHIVE_PATH}" -C "${SOURCE_ROOT}"
 
-# QXmpp 1.14.4 uses Q_DECL_DEPRECATED_X after QXMPP_EXPORT on a few deprecated
-# classes. That ordering breaks on the GitHub Linux toolchain when those headers
-# are included from server sources. Reorder the macros before building.
+# QXmpp 1.14.4 marks a few deprecated classes with a combination of
+# Q_DECL_DEPRECATED_X and QXMPP_EXPORT that breaks on the GitHub Linux toolchain.
+# CuteXMPP does not rely on the deprecation marker itself, only on the symbols,
+# so we strip that marker from the affected class declarations before building.
 python3 - "${SOURCE_DIR}" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 source_dir = Path(sys.argv[1])
-replacements = {
-    source_dir / "src" / "base" / "QXmppBindIq.h":
-        ('class QXMPP_EXPORT Q_DECL_DEPRECATED_X("Removed from public API") QXmppBindIq',
-         'class Q_DECL_DEPRECATED_X("Removed from public API") QXMPP_EXPORT QXmppBindIq'),
-    source_dir / "src" / "client" / "QXmppRemoteMethod.h":
-        ('class QXMPP_EXPORT Q_DECL_DEPRECATED_X("Removed from public API (unmaintained)") QXmppRemoteMethod',
-         'class Q_DECL_DEPRECATED_X("Removed from public API (unmaintained)") QXMPP_EXPORT QXmppRemoteMethod'),
-    source_dir / "src" / "client" / "QXmppRpcManager.h":
-        ('class QXMPP_EXPORT Q_DECL_DEPRECATED_X("Removed from public API (unmaintained)") QXmppRpcManager',
-         'class Q_DECL_DEPRECATED_X("Removed from public API (unmaintained)") QXMPP_EXPORT QXmppRpcManager'),
+patterns = {
+    source_dir / "src" / "base" / "QXmppBindIq.h": (
+        r'class\s+(?:QXMPP_EXPORT\s+)?Q_DECL_DEPRECATED_X\("Removed from public API"\)\s+(?:QXMPP_EXPORT\s+)?QXmppBindIq',
+        'class QXMPP_EXPORT QXmppBindIq',
+    ),
+    source_dir / "src" / "client" / "QXmppRemoteMethod.h": (
+        r'class\s+(?:QXMPP_EXPORT\s+)?Q_DECL_DEPRECATED_X\("Removed from public API \(unmaintained\)"\)\s+(?:QXMPP_EXPORT\s+)?QXmppRemoteMethod',
+        'class QXMPP_EXPORT QXmppRemoteMethod',
+    ),
+    source_dir / "src" / "client" / "QXmppRpcManager.h": (
+        r'class\s+(?:QXMPP_EXPORT\s+)?Q_DECL_DEPRECATED_X\("Removed from public API \(unmaintained\)"\)\s+(?:QXMPP_EXPORT\s+)?QXmppRpcManager',
+        'class QXMPP_EXPORT QXmppRpcManager',
+    ),
 }
 
-for path, (old, new) in replacements.items():
+for path, (pattern, replacement) in patterns.items():
     text = path.read_text(encoding="utf-8")
-    if old in text:
-        text = text.replace(old, new)
-        path.write_text(text, encoding="utf-8")
+    updated = re.sub(pattern, replacement, text)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
 PY
 
 cmake -S "${SOURCE_DIR}" -B "${BUILD_DIR}" -G Ninja \
