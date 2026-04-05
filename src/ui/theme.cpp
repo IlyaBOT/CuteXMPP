@@ -57,6 +57,8 @@ QString buildApplicationStyleSheet(const ThemePalette& theme)
                "QPushButton#PrimaryButton:hover { background: %6; }"
                "QPushButton#AuthToggleButton { padding: 4px 10px; border-radius: 10px; }"
                "QPushButton#DangerButton { background: transparent; color: #ff7f99; border-color: #7b4455; }"
+               "QPushButton#DangerButton:hover { background: #4a2330; border-color: #a3566e; }"
+               "QPushButton#DangerButton:pressed { background: #5a2b39; border-color: #b8647f; }"
                "QToolButton { background: transparent; border: none; padding: 8px; color: %2; }"
                "QToolButton:hover { background: rgba(255, 255, 255, 0.08); border-radius: 10px; }"
                "QToolButton#WorkspaceButton { border: 1px solid transparent; border-radius: 14px; padding: 10px 8px; }"

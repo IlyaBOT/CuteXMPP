@@ -4,7 +4,6 @@
 #include "src/ui/theme.h"
 #include "src/ui/widgets.h"
 
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -48,7 +47,6 @@ SettingsDialog::SettingsDialog(AppSettings* settings,
     , m_chats(chats)
     , m_workspaces(settings->customWorkspaces())
     , m_backgroundImagePath(settings->ui().chatBackgroundImagePath)
-    , m_chatBackgroundColor(settings->ui().chatBackgroundColor)
 {
     setWindowTitle("Settings");
     resize(880, 620);
@@ -116,7 +114,6 @@ void SettingsDialog::accept()
     m_settings->setRequireTls(m_requireTlsCheck->isChecked());
     m_settings->setRememberTokens(m_rememberTokensCheck->isChecked());
     m_settings->setLanguage(m_languageCombo->currentText());
-    m_settings->setChatBackgroundColor(m_chatBackgroundColor);
     m_settings->setChatBackgroundImagePath(m_backgroundImagePath);
     m_settings->setCustomWorkspaces(m_workspaces);
     QDialog::accept();
@@ -173,8 +170,21 @@ QWidget* SettingsDialog::buildMyAccountPage()
     profileRow->addWidget(m_accountAvatarLabel);
     profileRow->addLayout(labelColumn, 1);
 
+    auto* actionsLayout = new QHBoxLayout;
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setSpacing(10);
+
+    auto* logoutButton = new QPushButton("Log out", page);
+    logoutButton->setObjectName("DangerButton");
+    logoutButton->setEnabled(m_session.has_value());
+    connect(logoutButton, &QPushButton::clicked, this, [this]() { emit logoutRequested(); });
+
+    actionsLayout->addWidget(logoutButton, 0, Qt::AlignLeft);
+    actionsLayout->addStretch(1);
+
     layout->addWidget(title);
     layout->addLayout(profileRow);
+    layout->addLayout(actionsLayout);
     layout->addStretch(1);
     return wrapPageContent(page);
 }
@@ -266,16 +276,9 @@ QWidget* SettingsDialog::buildAppearancePage()
         m_themeCombo->setCurrentIndex(themeIndex);
     }
 
-    auto* colorButton = new QPushButton("Choose chat background color", page);
     auto* imageButton = new QPushButton("Choose background image", page);
     auto* clearImageButton = new QPushButton("Clear background image", page);
 
-    connect(colorButton, &QPushButton::clicked, this, [this]() {
-        const QColor color = QColorDialog::getColor(m_chatBackgroundColor, this, "Chat background");
-        if (color.isValid()) {
-            m_chatBackgroundColor = color;
-        }
-    });
     connect(imageButton, &QPushButton::clicked, this, [this]() {
         const QString path = QFileDialog::getOpenFileName(this,
                                                           "Choose background image",
@@ -288,7 +291,6 @@ QWidget* SettingsDialog::buildAppearancePage()
     connect(clearImageButton, &QPushButton::clicked, this, [this]() { m_backgroundImagePath.clear(); });
 
     form->addRow("Theme", m_themeCombo);
-    form->addRow(colorButton);
     form->addRow(imageButton);
     form->addRow(clearImageButton);
 

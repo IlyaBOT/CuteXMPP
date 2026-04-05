@@ -34,7 +34,6 @@ struct ThemePalette
 struct UiSettings
 {
     QString themeId = "nocturne";
-    QColor chatBackgroundColor = QColor("#f5f3f9");
     QString chatBackgroundImagePath;
     int chatListWidth = 360;
     bool notificationsEnabled = true;

@@ -110,15 +110,6 @@ void AppSettings::setThemeId(const QString& themeId)
     saveUi();
 }
 
-void AppSettings::setChatBackgroundColor(const QColor& color)
-{
-    if (!color.isValid() || m_ui.chatBackgroundColor == color) {
-        return;
-    }
-    m_ui.chatBackgroundColor = color;
-    saveUi();
-}
-
 void AppSettings::setChatBackgroundImagePath(const QString& path)
 {
     if (m_ui.chatBackgroundImagePath == path) {
@@ -263,10 +254,6 @@ void AppSettings::load()
 {
     QSettings settings = createSettings();
     m_ui.themeId = settings.value("ui/theme", m_ui.themeId).toString();
-    m_ui.chatBackgroundColor = QColor(settings.value("ui/chatBackgroundColor", m_ui.chatBackgroundColor.name()).toString());
-    if (!m_ui.chatBackgroundColor.isValid()) {
-        m_ui.chatBackgroundColor = QColor("#f5f3f9");
-    }
     m_ui.chatBackgroundImagePath = settings.value("ui/chatBackgroundImage").toString();
     m_ui.chatListWidth = settings.value("ui/chatListWidth", m_ui.chatListWidth).toInt();
     m_ui.notificationsEnabled = settings.value("ui/notificationsEnabled", m_ui.notificationsEnabled).toBool();
@@ -300,7 +287,7 @@ void AppSettings::saveUi() const
 {
     QSettings settings = createSettings();
     settings.setValue("ui/theme", m_ui.themeId);
-    settings.setValue("ui/chatBackgroundColor", m_ui.chatBackgroundColor.name());
+    settings.remove("ui/chatBackgroundColor");
     settings.setValue("ui/chatBackgroundImage", m_ui.chatBackgroundImagePath);
     settings.setValue("ui/chatListWidth", m_ui.chatListWidth);
     settings.setValue("ui/notificationsEnabled", m_ui.notificationsEnabled);

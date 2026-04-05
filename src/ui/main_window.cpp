@@ -121,7 +121,7 @@ void MainWindow::applyUiSettings()
 {
     m_theme = themeById(m_settings->ui().themeId);
     m_chatBackground->setOverlayColor(m_theme.id == "daybreak" ? QColor(255, 255, 255, 50) : QColor(255, 255, 255, 22));
-    m_chatBackground->setBackgroundAppearance(m_settings->ui().chatBackgroundColor, m_settings->ui().chatBackgroundImagePath);
+    m_chatBackground->setBackgroundAppearance(m_theme.bubbleIncoming, m_settings->ui().chatBackgroundImagePath);
 
     const int chatListWidth = m_settings->ui().chatListWidth;
     m_contentSplitter->setSizes({chatListWidth, width() - chatListWidth});
@@ -679,9 +679,20 @@ QString MainWindow::currentWorkspaceName() const
 void MainWindow::openSettings()
 {
     SettingsDialog dialog(m_settings, m_service->session(), m_service->chats(), this);
+    bool requestedLogout = false;
+    connect(&dialog, &SettingsDialog::logoutRequested, this, [&dialog, &requestedLogout]() {
+        requestedLogout = true;
+        dialog.done(QDialog::Rejected);
+    });
+
     if (dialog.exec() == QDialog::Accepted) {
         qApp->setStyleSheet(buildApplicationStyleSheet(themeById(m_settings->ui().themeId)));
         applyUiSettings();
+        return;
+    }
+
+    if (requestedLogout) {
+        emit logoutRequested();
     }
 }
 

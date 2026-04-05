@@ -386,10 +386,9 @@ void ChatBackgroundFrame::paintEvent(QPaintEvent* event)
         const QPixmap background(m_imagePath);
         if (!background.isNull()) {
             painter.drawPixmap(rect(), background.scaled(size(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+            painter.fillRect(rect(), m_overlay);
         }
     }
-
-    painter.fillRect(rect(), m_overlay);
 }
 
 ChatListItemWidget::ChatListItemWidget(QWidget* parent)

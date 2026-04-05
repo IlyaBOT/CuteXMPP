@@ -20,7 +20,6 @@ public:
     QString deviceId() const;
 
     void setThemeId(const QString& themeId);
-    void setChatBackgroundColor(const QColor& color);
     void setChatBackgroundImagePath(const QString& path);
     void setChatListWidth(int width);
     void setNotificationsEnabled(bool enabled);

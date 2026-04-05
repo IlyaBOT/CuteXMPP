@@ -3,7 +3,6 @@
 #include "src/models/types.h"
 
 #include <QDialog>
-#include <QColor>
 #include <optional>
 
 class QCheckBox;
@@ -27,6 +26,9 @@ public:
                    const QVector<ChatSummary>& chats,
                    QWidget* parent = nullptr);
 
+signals:
+    void logoutRequested();
+
 protected:
     void accept() override;
 
@@ -49,7 +51,6 @@ private:
     QVector<Workspace> m_workspaces;
     bool m_updatingFolderChats = false;
     QString m_backgroundImagePath;
-    QColor m_chatBackgroundColor;
 
     QListWidget* m_categoryList = nullptr;
     QStackedWidget* m_pages = nullptr;
