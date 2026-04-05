@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 
-from common import build_dir_for_preset, default_preset, run_command
+from common import bootstrap_qxmpp, build_dir_for_preset, default_preset, detect_platform, qxmpp_available, run_command
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,7 +31,19 @@ def main() -> None:
     build_dir = build_dir_for_preset(preset)
 
     if args.configure or not build_dir.exists():
-        run_command(["cmake", "--preset", preset])
+        if detect_platform() != "windows" and not qxmpp_available():
+            print("[INFO] QXmpp was not found. Bootstrapping a local copy into .deps/qxmpp/install...")
+            try:
+                bootstrap_qxmpp()
+            except subprocess.CalledProcessError as error:
+                raise SystemExit(
+                    "Failed to build the local QXmpp dependency. "
+                    "You can retry with `bash scripts/ci/build_qxmpp.sh` or configure manually via CMAKE_PREFIX_PATH."
+                ) from error
+        try:
+            run_command(["cmake", "--preset", preset])
+        except subprocess.CalledProcessError as error:
+            raise SystemExit(f"CMake configure failed for preset `{preset}`.") from error
 
     command = ["cmake", "--build", "--preset", preset]
     if args.target:
@@ -38,7 +51,10 @@ def main() -> None:
     if args.jobs:
         command.extend(["--parallel", str(args.jobs)])
 
-    run_command(command)
+    try:
+        run_command(command)
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f"CMake build failed for preset `{preset}`.") from error
 
 
 if __name__ == "__main__":
