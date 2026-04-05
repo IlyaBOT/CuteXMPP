@@ -119,12 +119,23 @@ AuthDialog::AuthDialog(QWidget* parent)
     QTimer::singleShot(0, this, &AuthDialog::updateWindowHeight);
 }
 
-void AuthDialog::setBusy(bool busy, const QString& status)
+void AuthDialog::setBusy(bool busy, const QString& status, int busyPageIndex)
 {
-    if (m_authCard) {
-        m_authCard->setEnabled(!busy);
+    m_busy = busy;
+    if (busy) {
+        if (busyPageIndex >= 0) {
+            m_busyPageIndex = busyPageIndex;
+        } else if (m_pages) {
+            m_busyPageIndex = m_pages->currentIndex();
+        }
+    } else {
+        m_busyPageIndex = -1;
     }
+
+    updateBusyState();
+
     if (!status.isEmpty()) {
+        m_statusLabel->setStyleSheet({});
         m_statusLabel->setText(status);
         m_statusLabel->setVisible(true);
         updateWindowHeight();
@@ -200,6 +211,8 @@ QWidget* AuthDialog::buildAuthCard()
 
 QWidget* AuthDialog::buildLoginPage()
 {
+    constexpr int kLoginPageIndex = 0;
+
     auto* page = new QWidget;
     page->setObjectName("AuthPage");
     page->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
@@ -268,20 +281,20 @@ QWidget* AuthDialog::buildLoginPage()
     advancedLayout->addWidget(m_loginTlsCombo);
     m_loginAdvancedPanel->setVisible(false);
 
-    auto* signInButton = new QPushButton("Sign in", page);
-    signInButton->setObjectName("PrimaryButton");
-    signInButton->setFixedHeight(36);
-    signInButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_loginPrimaryButton = new QPushButton("Sign in", page);
+    m_loginPrimaryButton->setObjectName("PrimaryButton");
+    m_loginPrimaryButton->setFixedHeight(36);
+    m_loginPrimaryButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    auto* registerButton = new QPushButton("Register", page);
-    registerButton->setFixedHeight(36);
-    registerButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_loginSecondaryButton = new QPushButton("Register", page);
+    m_loginSecondaryButton->setFixedHeight(36);
+    m_loginSecondaryButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto* actionRow = new QHBoxLayout;
     actionRow->setContentsMargins(0, 0, 0, 0);
     actionRow->setSpacing(8);
-    actionRow->addWidget(signInButton, 1);
-    actionRow->addWidget(registerButton, 1);
+    actionRow->addWidget(m_loginPrimaryButton, 1);
+    actionRow->addWidget(m_loginSecondaryButton, 1);
 
     formLayout->addWidget(heroTitle);
     formLayout->addWidget(heroSubtitle);
@@ -302,11 +315,28 @@ QWidget* AuthDialog::buildLoginPage()
     layout->addWidget(formColumn, 0, Qt::AlignTop);
     layout->addSpacing(4);
 
+    m_loginBusyWidgets = {
+        m_loginJidEdit,
+        m_loginServerEdit,
+        m_loginPasswordEdit,
+        advancedToggle,
+        m_loginConnectHostEdit,
+        m_loginPortEdit,
+        m_loginProxyCombo,
+        m_loginTlsCombo,
+        m_loginSecondaryButton
+    };
+
     connect(advancedToggle, &QPushButton::toggled, this, [this, advancedToggle](bool visible) {
         setAdvancedPanelVisible(m_loginAdvancedPanel, visible, advancedToggle);
     });
-    connect(registerButton, &QPushButton::clicked, this, [this]() { m_pages->setCurrentIndex(1); });
-    connect(signInButton, &QPushButton::clicked, this, [this]() {
+    connect(m_loginSecondaryButton, &QPushButton::clicked, this, [this]() { m_pages->setCurrentIndex(1); });
+    connect(m_loginPrimaryButton, &QPushButton::clicked, this, [this]() {
+        if (m_busy && m_busyPageIndex == kLoginPageIndex) {
+            emit authenticationCancelled();
+            return;
+        }
+
         clearStatus();
         const QString username = m_loginJidEdit->text().trimmed();
         const QString server = m_loginServerEdit->text().trimmed();
@@ -327,6 +357,8 @@ QWidget* AuthDialog::buildLoginPage()
 
 QWidget* AuthDialog::buildRegisterPage()
 {
+    constexpr int kRegisterPageIndex = 1;
+
     auto* page = new QWidget;
     page->setObjectName("AuthPage");
     page->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
@@ -399,16 +431,16 @@ QWidget* AuthDialog::buildRegisterPage()
     buttonRow->setContentsMargins(0, 0, 0, 0);
     buttonRow->setSpacing(8);
 
-    auto* backButton = new QPushButton("Back", page);
-    backButton->setFixedHeight(36);
-    backButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto* registerButton = new QPushButton("Register", page);
-    registerButton->setObjectName("PrimaryButton");
-    registerButton->setFixedHeight(36);
-    registerButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_registerSecondaryButton = new QPushButton("Back", page);
+    m_registerSecondaryButton->setFixedHeight(36);
+    m_registerSecondaryButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_registerPrimaryButton = new QPushButton("Register", page);
+    m_registerPrimaryButton->setObjectName("PrimaryButton");
+    m_registerPrimaryButton->setFixedHeight(36);
+    m_registerPrimaryButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    buttonRow->addWidget(backButton, 1);
-    buttonRow->addWidget(registerButton, 1);
+    buttonRow->addWidget(m_registerSecondaryButton, 1);
+    buttonRow->addWidget(m_registerPrimaryButton, 1);
 
     formLayout->addWidget(heroTitle);
     formLayout->addWidget(heroSubtitle);
@@ -429,11 +461,28 @@ QWidget* AuthDialog::buildRegisterPage()
     layout->addWidget(formColumn, 0, Qt::AlignTop);
     layout->addSpacing(4);
 
+    m_registerBusyWidgets = {
+        m_registerUsernameEdit,
+        m_registerServerEdit,
+        m_registerPasswordEdit,
+        advancedToggle,
+        m_registerConnectHostEdit,
+        m_registerPortEdit,
+        m_registerProxyCombo,
+        m_registerTlsCombo,
+        m_registerSecondaryButton
+    };
+
     connect(advancedToggle, &QPushButton::toggled, this, [this, advancedToggle](bool visible) {
         setAdvancedPanelVisible(m_registerAdvancedPanel, visible, advancedToggle);
     });
-    connect(backButton, &QPushButton::clicked, this, [this]() { m_pages->setCurrentIndex(0); });
-    connect(registerButton, &QPushButton::clicked, this, [this]() {
+    connect(m_registerSecondaryButton, &QPushButton::clicked, this, [this]() { m_pages->setCurrentIndex(0); });
+    connect(m_registerPrimaryButton, &QPushButton::clicked, this, [this]() {
+        if (m_busy && m_busyPageIndex == kRegisterPageIndex) {
+            emit authenticationCancelled();
+            return;
+        }
+
         clearStatus();
         RegistrationRequest request;
         request.username = m_registerUsernameEdit->text().trimmed();
@@ -490,6 +539,32 @@ void AuthDialog::updateWindowHeight()
     setMinimumHeight(targetHeight);
     setMaximumHeight(targetHeight);
     resize(kAuthWindowWidth, targetHeight);
+}
+
+void AuthDialog::updateBusyState()
+{
+    const bool loginBusy = m_busy && m_busyPageIndex == 0;
+    const bool registerBusy = m_busy && m_busyPageIndex == 1;
+
+    for (QWidget* widget : m_loginBusyWidgets) {
+        if (widget) {
+            widget->setEnabled(!loginBusy);
+        }
+    }
+    for (QWidget* widget : m_registerBusyWidgets) {
+        if (widget) {
+            widget->setEnabled(!registerBusy);
+        }
+    }
+
+    if (m_loginPrimaryButton) {
+        m_loginPrimaryButton->setText(loginBusy ? "Cancel" : "Sign in");
+        m_loginPrimaryButton->setEnabled(true);
+    }
+    if (m_registerPrimaryButton) {
+        m_registerPrimaryButton->setText(registerBusy ? "Cancel" : "Register");
+        m_registerPrimaryButton->setEnabled(true);
+    }
 }
 
 }  // namespace CuteXmpp

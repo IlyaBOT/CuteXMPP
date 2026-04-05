@@ -3,7 +3,9 @@
 #include "src/models/types.h"
 
 #include <QObject>
+#include <QThread>
 #include <QXmppStanza.h>
+#include <memory>
 #include <optional>
 
 class QXmppClient;
@@ -27,6 +29,7 @@ class QXmppBookmarkSet;
 namespace CuteXmpp {
 
 class AppSettings;
+class NativeLoopbackRelay;
 
 class XmppService final : public QObject
 {
@@ -36,7 +39,7 @@ public:
     explicit XmppService(AppSettings* settings, QObject* parent = nullptr);
     ~XmppService() override;
 
-    const std::optional<AccountSession>& session() const;
+    std::optional<AccountSession> session() const;
     QVector<ChatSummary> chats() const;
     QVector<MessageEntry> messages(const QString& chatId) const;
     bool canLoadOlderMessages(const QString& chatId) const;
@@ -102,6 +105,11 @@ private:
     void handleRegistrationFailed(const QXmppStanza::Error& error);
     void saveCredentialsIfNeeded();
     void finishAuthentication(const QString& displayName);
+    void stopConnectionRelay();
+    void startLoginSequence(const LoginRequest& request);
+    void connectLoginAttempt(const LoginRequest& request);
+    bool tryNextLoginAttempt(const QString& message);
+    QVector<LoginRequest> buildLoginAttempts(const LoginRequest& request) const;
 
     AppSettings* m_settings = nullptr;
     QXmppClient* m_client = nullptr;
@@ -132,6 +140,9 @@ private:
     PendingOperation m_pendingOperation = PendingOperation::None;
     std::optional<LoginRequest> m_pendingLogin;
     std::optional<RegistrationRequest> m_pendingRegistration;
+    std::unique_ptr<NativeLoopbackRelay> m_connectionRelay;
+    QVector<LoginRequest> m_loginAttempts;
+    int m_loginAttemptIndex = -1;
 };
 
 }  // namespace CuteXmpp

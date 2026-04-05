@@ -10,10 +10,10 @@
 #include <QImage>
 #include <QMap>
 #include <QNetworkProxy>
-#include <QSysInfo>
+#include <QTcpSocket>
+#include <QThread>
 #include <QTimer>
 #include <QUuid>
-#include <QXmlStreamReader>
 #include <QXmlStreamWriter>
 
 #include <QXmppClient.h>
@@ -48,8 +48,298 @@
 #include <QXmppVCardManager.h>
 
 #include <algorithm>
+#include <array>
+
+#ifdef Q_OS_WIN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <atomic>
+#include <mutex>
+#include <thread>
+#endif
 
 namespace CuteXmpp {
+
+#ifdef Q_OS_WIN
+class NativeLoopbackRelay
+{
+public:
+    NativeLoopbackRelay(QString remoteHost, quint16 remotePort)
+        : m_remoteHost(std::move(remoteHost))
+        , m_remotePort(remotePort)
+    {
+    }
+
+    ~NativeLoopbackRelay()
+    {
+        stop();
+    }
+
+    bool start(QString* errorMessage)
+    {
+        static const bool winsockReady = []() {
+            WSADATA data;
+            return WSAStartup(MAKEWORD(2, 2), &data) == 0;
+        }();
+        if (!winsockReady) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("WSAStartup failed.");
+            }
+            return false;
+        }
+
+        m_listenSocket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (m_listenSocket == INVALID_SOCKET) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Failed to create relay listen socket.");
+            }
+            return false;
+        }
+
+        sockaddr_in address {};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        if (::bind(m_listenSocket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Failed to bind relay listen socket.");
+            }
+            closeSocket(m_listenSocket);
+            m_listenSocket = INVALID_SOCKET;
+            return false;
+        }
+
+        if (::listen(m_listenSocket, 1) == SOCKET_ERROR) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Failed to listen on relay socket.");
+            }
+            closeSocket(m_listenSocket);
+            m_listenSocket = INVALID_SOCKET;
+            return false;
+        }
+
+        sockaddr_in boundAddress {};
+        int boundAddressSize = sizeof(boundAddress);
+        if (::getsockname(m_listenSocket, reinterpret_cast<sockaddr*>(&boundAddress), &boundAddressSize) == SOCKET_ERROR) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("Failed to determine relay listen port.");
+            }
+            closeSocket(m_listenSocket);
+            m_listenSocket = INVALID_SOCKET;
+            return false;
+        }
+
+        m_localPort = ntohs(boundAddress.sin_port);
+        m_thread = std::thread([this]() { run(); });
+        return true;
+    }
+
+    void stop()
+    {
+        m_stopRequested.store(true);
+        closeOwnedSockets();
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+        m_localPort = 0;
+    }
+
+    quint16 localPort() const
+    {
+        return m_localPort;
+    }
+
+private:
+    static void closeSocket(SOCKET socket)
+    {
+        if (socket != INVALID_SOCKET) {
+            ::closesocket(socket);
+        }
+    }
+
+    static void enableSocketOptions(SOCKET socket)
+    {
+        if (socket == INVALID_SOCKET) {
+            return;
+        }
+
+        const BOOL enabled = TRUE;
+        const DWORD timeoutMs = 15000;
+        ::setsockopt(socket, SOL_SOCKET, SO_KEEPALIVE, reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+        ::setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+        ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+        ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    }
+
+    void closeOwnedSockets()
+    {
+        std::scoped_lock lock(m_socketMutex);
+        closeSocket(m_listenSocket);
+        closeSocket(m_localSocket);
+        closeSocket(m_remoteSocket);
+        m_listenSocket = INVALID_SOCKET;
+        m_localSocket = INVALID_SOCKET;
+        m_remoteSocket = INVALID_SOCKET;
+    }
+
+    SOCKET connectRemote()
+    {
+        addrinfoW hints {};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        addrinfoW* results = nullptr;
+        const QString portString = QString::number(m_remotePort);
+        if (::GetAddrInfoW(reinterpret_cast<LPCWSTR>(m_remoteHost.utf16()),
+                           reinterpret_cast<LPCWSTR>(portString.utf16()),
+                           &hints,
+                           &results) != 0) {
+            return INVALID_SOCKET;
+        }
+
+        SOCKET socket = INVALID_SOCKET;
+        for (addrinfoW* current = results; current; current = current->ai_next) {
+            socket = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+            if (socket == INVALID_SOCKET) {
+                continue;
+            }
+            enableSocketOptions(socket);
+            if (::connect(socket, current->ai_addr, static_cast<int>(current->ai_addrlen)) == 0) {
+                break;
+            }
+            closeSocket(socket);
+            socket = INVALID_SOCKET;
+        }
+
+        ::FreeAddrInfoW(results);
+        return socket;
+    }
+
+    void forwardLoop(SOCKET source, SOCKET destination, const char* sourceName, const char* destinationName)
+    {
+        constexpr int bufferSize = 64 * 1024;
+        std::array<char, bufferSize> buffer {};
+        bool loggedFirstPacket = false;
+
+        while (!m_stopRequested.load()) {
+            const int received = ::recv(source, buffer.data(), static_cast<int>(buffer.size()), 0);
+            if (received == 0) {
+                logDebug(QStringLiteral("XMPP relay: %1 closed the socket.").arg(QString::fromUtf8(sourceName)));
+                break;
+            }
+            if (received < 0) {
+                logDebug(QStringLiteral("XMPP relay: recv failed while forwarding %1 -> %2 (WSA=%3)")
+                             .arg(QString::fromUtf8(sourceName), QString::fromUtf8(destinationName))
+                             .arg(WSAGetLastError()));
+                break;
+            }
+
+            if (!loggedFirstPacket) {
+                loggedFirstPacket = true;
+                logDebug(QStringLiteral("XMPP relay: first payload %1 -> %2 (%3 bytes)")
+                             .arg(QString::fromUtf8(sourceName), QString::fromUtf8(destinationName))
+                             .arg(received));
+            }
+
+            int writtenTotal = 0;
+            while (writtenTotal < received) {
+                const int written = ::send(destination, buffer.data() + writtenTotal, received - writtenTotal, 0);
+                if (written <= 0) {
+                    logDebug(QStringLiteral("XMPP relay: send failed while forwarding %1 -> %2 (WSA=%3)")
+                                 .arg(QString::fromUtf8(sourceName), QString::fromUtf8(destinationName))
+                                 .arg(WSAGetLastError()));
+                    m_stopRequested.store(true);
+                    closeOwnedSockets();
+                    return;
+                }
+                writtenTotal += written;
+            }
+        }
+
+        m_stopRequested.store(true);
+        closeOwnedSockets();
+    }
+
+    void run()
+    {
+        SOCKET acceptedSocket = INVALID_SOCKET;
+        SOCKET listenSocket = INVALID_SOCKET;
+        {
+            std::scoped_lock lock(m_socketMutex);
+            listenSocket = m_listenSocket;
+        }
+        if (listenSocket == INVALID_SOCKET) {
+            return;
+        }
+
+        acceptedSocket = ::accept(listenSocket, nullptr, nullptr);
+
+        if (acceptedSocket == INVALID_SOCKET || m_stopRequested.load()) {
+            closeSocket(acceptedSocket);
+            return;
+        }
+        enableSocketOptions(acceptedSocket);
+        logDebug(QStringLiteral("XMPP relay: accepted local connection on 127.0.0.1:%1").arg(m_localPort));
+
+        SOCKET remoteSocket = connectRemote();
+        if (remoteSocket == INVALID_SOCKET) {
+            logDebug(QStringLiteral("XMPP relay: failed to connect to remote host %1:%2").arg(m_remoteHost).arg(m_remotePort));
+            closeSocket(acceptedSocket);
+            return;
+        }
+        logDebug(QStringLiteral("XMPP relay: connected to remote host %1:%2").arg(m_remoteHost).arg(m_remotePort));
+
+        {
+            std::scoped_lock lock(m_socketMutex);
+            m_localSocket = acceptedSocket;
+            m_remoteSocket = remoteSocket;
+        }
+
+        std::thread clientToServer([this, acceptedSocket, remoteSocket]() {
+            forwardLoop(acceptedSocket, remoteSocket, "client", "server");
+        });
+        std::thread serverToClient([this, remoteSocket, acceptedSocket]() {
+            forwardLoop(remoteSocket, acceptedSocket, "server", "client");
+        });
+
+        if (clientToServer.joinable()) {
+            clientToServer.join();
+        }
+        if (serverToClient.joinable()) {
+            serverToClient.join();
+        }
+
+        closeOwnedSockets();
+    }
+
+    QString m_remoteHost;
+    quint16 m_remotePort = 0;
+    std::atomic_bool m_stopRequested = false;
+    std::mutex m_socketMutex;
+    std::thread m_thread;
+    SOCKET m_listenSocket = INVALID_SOCKET;
+    SOCKET m_localSocket = INVALID_SOCKET;
+    SOCKET m_remoteSocket = INVALID_SOCKET;
+    quint16 m_localPort = 0;
+};
+#else
+class NativeLoopbackRelay
+{
+public:
+    NativeLoopbackRelay(QString, quint16) {}
+    bool start(QString*)
+    {
+        return false;
+    }
+    void stop() {}
+    quint16 localPort() const
+    {
+        return 0;
+    }
+};
+#endif
 
 namespace {
 
@@ -81,6 +371,15 @@ QString credentialKey(const QString& bareJid)
 QString configuredHostText(const QString& host)
 {
     return host.trimmed().isEmpty() ? QStringLiteral("<auto>") : host.trimmed();
+}
+
+bool isLocalLoopbackHost(const QString& host)
+{
+    const QString normalized = host.trimmed().toLower();
+    return normalized.isEmpty()
+        || normalized == QStringLiteral("localhost")
+        || normalized == QStringLiteral("127.0.0.1")
+        || normalized == QStringLiteral("::1");
 }
 
 QString maskedEndpoint(const QString& jid, const QString& domain, const QString& host, quint16 port, const QString& password)
@@ -162,27 +461,86 @@ QString proxyDetails(ProxyMode mode)
     }
 }
 
+bool shouldUseNativeLoopbackRelay(const QString& host, ProxyMode proxyMode, TlsMode tlsMode)
+{
+#ifdef Q_OS_WIN
+    return !host.trimmed().isEmpty()
+        && !isLocalLoopbackHost(host)
+        && tlsMode != TlsMode::DirectTls
+        && (proxyMode == ProxyMode::System || proxyMode == ProxyMode::NoProxy);
+#else
+    Q_UNUSED(host);
+    Q_UNUSED(proxyMode);
+    Q_UNUSED(tlsMode);
+    return false;
+#endif
+}
+
+bool isCallableOnCurrentThread(const QObject* object)
+{
+    const QThread* objectThread = object ? object->thread() : nullptr;
+    return !objectThread || objectThread == QThread::currentThread() || !objectThread->isRunning();
+}
+
+QVector<LoginRequest> buildCandidateLoginAttempts(const LoginRequest& request)
+{
+    QVector<LoginRequest> attempts;
+    QSet<QString> seen;
+
+    const auto addAttempt = [&](const LoginRequest& candidate) {
+        const QString key = QStringLiteral("%1|%2|%3|%4|%5|%6")
+                                .arg(candidate.jid, candidate.server, candidate.connectHost)
+                                .arg(candidate.port)
+                                .arg(static_cast<int>(candidate.tlsMode))
+                                .arg(static_cast<int>(candidate.proxyMode));
+        if (seen.contains(key)) {
+            return;
+        }
+        seen.insert(key);
+        attempts.push_back(candidate);
+    };
+
+    addAttempt(request);
+
+    for (int i = 0; i < 2; ++i) {
+        addAttempt(request);
+    }
+
+    if (request.proxyMode == ProxyMode::System) {
+        LoginRequest noProxy = request;
+        noProxy.proxyMode = ProxyMode::NoProxy;
+        addAttempt(noProxy);
+        addAttempt(noProxy);
+    }
+
+    if (request.server.startsWith(QStringLiteral("xmpp."), Qt::CaseInsensitive)) {
+        const QString baseDomain = request.server.mid(5).trimmed();
+        if (!baseDomain.isEmpty()) {
+            LoginRequest baseDomainAttempt = request;
+            baseDomainAttempt.jid = QStringLiteral("%1@%2").arg(userFromJid(request.jid), baseDomain);
+            baseDomainAttempt.server = baseDomain;
+            if (baseDomainAttempt.connectHost.isEmpty()) {
+                baseDomainAttempt.connectHost = request.server;
+            }
+            addAttempt(baseDomainAttempt);
+
+            if (request.proxyMode == ProxyMode::System) {
+                LoginRequest baseDomainNoProxy = baseDomainAttempt;
+                baseDomainNoProxy.proxyMode = ProxyMode::NoProxy;
+                addAttempt(baseDomainNoProxy);
+            }
+        }
+    }
+
+    return attempts;
+}
+
 QString serializeCredentials(const QXmppCredentials& credentials)
 {
     QString xml;
     QXmlStreamWriter writer(&xml);
     credentials.toXml(writer);
     return xml;
-}
-
-std::optional<QXmppCredentials> deserializeCredentials(const QString& xml)
-{
-    if (xml.trimmed().isEmpty()) {
-        return std::nullopt;
-    }
-
-    QXmlStreamReader reader(xml);
-    while (!reader.atEnd() && reader.readNext() != QXmlStreamReader::StartElement) {
-    }
-    if (reader.atEnd()) {
-        return std::nullopt;
-    }
-    return QXmppCredentials::fromXml(reader);
 }
 
 PresenceState presenceFromXmpp(const QXmppPresence& presence)
@@ -358,39 +716,101 @@ XmppService::XmppService(AppSettings* settings, QObject* parent)
 
 XmppService::~XmppService() = default;
 
-const std::optional<AccountSession>& XmppService::session() const
+void XmppService::stopConnectionRelay()
 {
+    if (!m_connectionRelay) {
+        return;
+    }
+    m_connectionRelay->stop();
+    m_connectionRelay.reset();
+}
+
+std::optional<AccountSession> XmppService::session() const
+{
+    if (!isCallableOnCurrentThread(this)) {
+        std::optional<AccountSession> result;
+        QMetaObject::invokeMethod(const_cast<XmppService*>(this), [&]() {
+            result = m_session;
+        }, Qt::BlockingQueuedConnection);
+        return result;
+    }
+
     return m_session;
 }
 
 QVector<ChatSummary> XmppService::chats() const
 {
-    QVector<ChatSummary> chats = m_chats.values().toVector();
-    std::sort(chats.begin(), chats.end(), [](const ChatSummary& left, const ChatSummary& right) {
-        return left.lastActivity > right.lastActivity;
-    });
-    return chats;
+    auto buildChats = [this]() {
+        QVector<ChatSummary> result = m_chats.values().toVector();
+        std::sort(result.begin(), result.end(), [](const ChatSummary& left, const ChatSummary& right) {
+            return left.lastActivity > right.lastActivity;
+        });
+        return result;
+    };
+
+    if (!isCallableOnCurrentThread(this)) {
+        QVector<ChatSummary> result;
+        QMetaObject::invokeMethod(const_cast<XmppService*>(this), [&]() {
+            result = buildChats();
+        }, Qt::BlockingQueuedConnection);
+        return result;
+    }
+
+    return buildChats();
 }
 
 QVector<MessageEntry> XmppService::messages(const QString& chatId) const
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QVector<MessageEntry> result;
+        QMetaObject::invokeMethod(const_cast<XmppService*>(this), [&, chatId]() {
+            result = m_messages.value(chatId);
+        }, Qt::BlockingQueuedConnection);
+        return result;
+    }
+
     return m_messages.value(chatId);
 }
 
 bool XmppService::canLoadOlderMessages(const QString& chatId) const
 {
+    if (!isCallableOnCurrentThread(this)) {
+        bool result = false;
+        QMetaObject::invokeMethod(const_cast<XmppService*>(this), [&, chatId]() {
+            const auto it = m_historyStates.constFind(chatId);
+            result = it != m_historyStates.cend() && it->initialLoaded && it->hasMore && !it->loading;
+        }, Qt::BlockingQueuedConnection);
+        return result;
+    }
+
     const auto it = m_historyStates.constFind(chatId);
     return it != m_historyStates.cend() && it->initialLoaded && it->hasMore && !it->loading;
 }
 
 bool XmppService::isHistoryLoading(const QString& chatId) const
 {
+    if (!isCallableOnCurrentThread(this)) {
+        bool result = false;
+        QMetaObject::invokeMethod(const_cast<XmppService*>(this), [&, chatId]() {
+            const auto it = m_historyStates.constFind(chatId);
+            result = it != m_historyStates.cend() && it->loading;
+        }, Qt::BlockingQueuedConnection);
+        return result;
+    }
+
     const auto it = m_historyStates.constFind(chatId);
     return it != m_historyStates.cend() && it->loading;
 }
 
 void XmppService::login(const LoginRequest& rawRequest)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, rawRequest]() {
+            login(rawRequest);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     const QString jid = bareJidOf(rawRequest.jid);
     const QString username = userFromJid(jid);
     const QString server = rawRequest.server.trimmed().isEmpty() ? domainFromJid(jid) : rawRequest.server.trimmed();
@@ -413,6 +833,27 @@ void XmppService::login(const LoginRequest& rawRequest)
     request.server = server;
     request.connectHost = connectHost;
 
+    startLoginSequence(request);
+}
+
+void XmppService::startLoginSequence(const LoginRequest& request)
+{
+    m_loginAttempts = buildLoginAttempts(request);
+    m_loginAttemptIndex = 0;
+    connectLoginAttempt(m_loginAttempts.constFirst());
+}
+
+QVector<LoginRequest> XmppService::buildLoginAttempts(const LoginRequest& request) const
+{
+    return buildCandidateLoginAttempts(request);
+}
+
+void XmppService::connectLoginAttempt(const LoginRequest& request)
+{
+    const QString jid = bareJidOf(request.jid);
+    const QString username = userFromJid(jid);
+
+    stopConnectionRelay();
     resetSessionState();
     m_pendingLogin = request;
     m_pendingOperation = PendingOperation::Login;
@@ -426,31 +867,55 @@ void XmppService::login(const LoginRequest& rawRequest)
                      proxyDetails(request.proxyMode)));
 
     QXmppConfiguration configuration;
-    configuration.setJid(request.jid);
+    configuration.setUser(username);
     configuration.setPassword(request.password);
     configuration.setDomain(request.server);
-    if (!request.connectHost.isEmpty()) {
-        configuration.setHost(request.connectHost);
+    QString socketHost = request.connectHost;
+    const QString relayTargetHost = socketHost.isEmpty() ? request.server : socketHost;
+    quint16 socketPort = request.port;
+    QNetworkProxy proxy = networkProxyFor(request.proxyMode);
+
+    if (shouldUseNativeLoopbackRelay(relayTargetHost, request.proxyMode, request.tlsMode)) {
+#ifdef Q_OS_WIN
+        auto relay = std::make_unique<NativeLoopbackRelay>(relayTargetHost, socketPort);
+        QString relayError;
+        if (relay->start(&relayError)) {
+            logInfo(QStringLiteral("Routing XMPP connection through local relay: %1:%2 -> 127.0.0.1:%3")
+                        .arg(relayTargetHost)
+                        .arg(socketPort)
+                        .arg(relay->localPort()));
+            socketHost = QStringLiteral("127.0.0.1");
+            socketPort = relay->localPort();
+            proxy = QNetworkProxy(QNetworkProxy::NoProxy);
+            m_connectionRelay = std::move(relay);
+        } else {
+            logError(QStringLiteral("Failed to start local XMPP relay for %1:%2: %3")
+                         .arg(relayTargetHost)
+                         .arg(socketPort)
+                         .arg(relayError));
+        }
+#endif
     }
-    configuration.setPort(request.port);
+
+    if (!socketHost.isEmpty()) {
+        configuration.setHost(socketHost);
+    }
+    configuration.setPort(socketPort);
     configuration.setResourcePrefix("CuteXMPP");
     configuration.setAutoAcceptSubscriptions(true);
     configuration.setAutoReconnectionEnabled(false);
     configuration.setUseSASLAuthentication(true);
-    configuration.setUseSasl2Authentication(true);
-    configuration.setUseFastTokenAuthentication(m_settings->ui().rememberTokens);
+    configuration.setUseSasl2Authentication(false);
+    configuration.setUseFastTokenAuthentication(false);
     configuration.setStreamSecurityMode(streamSecurityModeFor(request.tlsMode));
-    configuration.setNetworkProxy(networkProxyFor(request.proxyMode));
-    configuration.setSasl2UserAgent(std::optional<QXmppSasl2UserAgent>(QXmppSasl2UserAgent(QUuid(m_settings->deviceId()), "CuteXMPP", QSysInfo::machineHostName())));
+    configuration.setNetworkProxy(proxy);
+    configuration.setSasl2UserAgent(std::nullopt);
 
-    if (m_settings->ui().rememberTokens) {
-        const QSettings settingsStore = createSettings();
-        const auto credentials = deserializeCredentials(settingsStore.value(credentialKey(jid)).toString());
-        if (credentials.has_value()) {
-            configuration.setCredentials(*credentials);
-            logDebug(QStringLiteral("Loaded cached credentials for %1").arg(jid));
-        } else {
-            logDebug(QStringLiteral("No cached credentials found for %1").arg(jid));
+    {
+        QSettings settingsStore = createSettings();
+        if (settingsStore.contains(credentialKey(jid))) {
+            settingsStore.remove(credentialKey(jid));
+            logDebug(QStringLiteral("Removed cached SASL2 credentials for %1 before login fallback.").arg(jid));
         }
     }
 
@@ -467,6 +932,13 @@ void XmppService::login(const LoginRequest& rawRequest)
 
 void XmppService::registerAccount(const RegistrationRequest& rawRequest)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, rawRequest]() {
+            registerAccount(rawRequest);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     const QString username = rawRequest.username.trimmed();
     const QString server = rawRequest.server.trimmed();
     const QString connectHost = rawRequest.connectHost.trimmed();
@@ -488,7 +960,10 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
     request.server = server;
     request.connectHost = connectHost;
 
+    stopConnectionRelay();
     resetSessionState();
+    m_loginAttempts.clear();
+    m_loginAttemptIndex = -1;
     m_pendingRegistration = request;
     m_pendingLogin.reset();
     m_pendingOperation = PendingOperation::RegistrationHandshake;
@@ -504,15 +979,42 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
 
     QXmppConfiguration configuration;
     configuration.setDomain(request.server);
-    if (!request.connectHost.isEmpty()) {
-        configuration.setHost(request.connectHost);
+    QString socketHost = request.connectHost;
+    const QString relayTargetHost = socketHost.isEmpty() ? request.server : socketHost;
+    quint16 socketPort = request.port;
+    QNetworkProxy proxy = networkProxyFor(request.proxyMode);
+
+    if (shouldUseNativeLoopbackRelay(relayTargetHost, request.proxyMode, request.tlsMode)) {
+#ifdef Q_OS_WIN
+        auto relay = std::make_unique<NativeLoopbackRelay>(relayTargetHost, socketPort);
+        QString relayError;
+        if (relay->start(&relayError)) {
+            logInfo(QStringLiteral("Routing registration connection through local relay: %1:%2 -> 127.0.0.1:%3")
+                        .arg(relayTargetHost)
+                        .arg(socketPort)
+                        .arg(relay->localPort()));
+            socketHost = QStringLiteral("127.0.0.1");
+            socketPort = relay->localPort();
+            proxy = QNetworkProxy(QNetworkProxy::NoProxy);
+            m_connectionRelay = std::move(relay);
+        } else {
+            logError(QStringLiteral("Failed to start local registration relay for %1:%2: %3")
+                         .arg(relayTargetHost)
+                         .arg(socketPort)
+                         .arg(relayError));
+        }
+#endif
     }
-    configuration.setPort(request.port);
+
+    if (!socketHost.isEmpty()) {
+        configuration.setHost(socketHost);
+    }
+    configuration.setPort(socketPort);
     configuration.setResourcePrefix("CuteXMPP");
-    configuration.setUseSasl2Authentication(true);
+    configuration.setUseSasl2Authentication(false);
     configuration.setUseFastTokenAuthentication(false);
     configuration.setStreamSecurityMode(streamSecurityModeFor(request.tlsMode));
-    configuration.setNetworkProxy(networkProxyFor(request.proxyMode));
+    configuration.setNetworkProxy(proxy);
 
     logDebug(QStringLiteral("Connecting for in-band registration: domain=%1, host=%2, port=%3, tls=%4, proxy=%5")
                  .arg(configuration.domain(), configuredHostText(configuration.host()))
@@ -523,17 +1025,36 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
 
 void XmppService::disconnectFromServer()
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this]() {
+            disconnectFromServer();
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     logInfo("Disconnecting from XMPP server.");
     m_pendingOperation = PendingOperation::None;
     m_pendingLogin.reset();
     m_pendingRegistration.reset();
+    m_loginAttempts.clear();
+    m_loginAttemptIndex = -1;
     m_registrationManager->setRegisterOnConnectEnabled(false);
     resetSessionState();
     m_client->disconnectFromServer();
+    if (m_client->state() == QXmppClient::DisconnectedState) {
+        stopConnectionRelay();
+    }
 }
 
 void XmppService::sendMessage(const QString& chatId, const QString& text)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, chatId, text]() {
+            sendMessage(chatId, text);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     if (!m_session.has_value() || chatId.isEmpty() || text.trimmed().isEmpty()) {
         return;
     }
@@ -609,6 +1130,13 @@ void XmppService::sendMessage(const QString& chatId, const QString& text)
 
 void XmppService::sendAttachment(const QString& chatId, const QString& filePath)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, chatId, filePath]() {
+            sendAttachment(chatId, filePath);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     if (!m_session.has_value() || chatId.isEmpty() || filePath.trimmed().isEmpty()) {
         return;
     }
@@ -694,6 +1222,13 @@ void XmppService::sendAttachment(const QString& chatId, const QString& filePath)
 
 void XmppService::ensureConversationLoaded(const QString& chatId)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, chatId]() {
+            ensureConversationLoaded(chatId);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     if (chatId.isEmpty()) {
         return;
     }
@@ -710,6 +1245,13 @@ void XmppService::ensureConversationLoaded(const QString& chatId)
 
 void XmppService::loadOlderMessages(const QString& chatId)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, chatId]() {
+            loadOlderMessages(chatId);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     if (!canLoadOlderMessages(chatId)) {
         return;
     }
@@ -719,6 +1261,13 @@ void XmppService::loadOlderMessages(const QString& chatId)
 
 void XmppService::markChatRead(const QString& chatId)
 {
+    if (!isCallableOnCurrentThread(this)) {
+        QMetaObject::invokeMethod(this, [this, chatId]() {
+            markChatRead(chatId);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     if (chatId.isEmpty() || !m_chats.contains(chatId)) {
         return;
     }
@@ -1417,6 +1966,7 @@ void XmppService::handleClientConnected()
 void XmppService::handleClientDisconnected()
 {
     logInfo("XMPP connection closed.");
+    stopConnectionRelay();
     if (m_pendingOperation == PendingOperation::RegistrationReconnectLogin && m_pendingRegistration.has_value()) {
         const RegistrationRequest registration = *m_pendingRegistration;
         LoginRequest loginRequest;
@@ -1432,6 +1982,47 @@ void XmppService::handleClientDisconnected()
     }
 }
 
+bool XmppService::tryNextLoginAttempt(const QString& message)
+{
+    if (m_pendingOperation != PendingOperation::Login || !m_pendingLogin.has_value() || m_loginAttempts.isEmpty()) {
+        return false;
+    }
+
+    const QString lowered = message.toLower();
+    const bool shouldRetry =
+        lowered.contains(QStringLiteral("remote host closed")) ||
+        lowered.contains(QStringLiteral("timed out")) ||
+        lowered.contains(QStringLiteral("unknown error")) ||
+        lowered.contains(QStringLiteral("no supported sasl mechanism")) ||
+        lowered.contains(QStringLiteral("plain is disabled")) ||
+        lowered.contains(QStringLiteral("socket:"));
+    if (!shouldRetry) {
+        return false;
+    }
+
+    if (m_loginAttemptIndex + 1 >= m_loginAttempts.size()) {
+        return false;
+    }
+
+    ++m_loginAttemptIndex;
+    const LoginRequest nextAttempt = m_loginAttempts.at(m_loginAttemptIndex);
+    logInfo(QStringLiteral("Retrying login with fallback %1/%2: jid=%3, server=%4, host=%5, port=%6, tls=%7, proxy=%8")
+                .arg(m_loginAttemptIndex + 1)
+                .arg(m_loginAttempts.size())
+                .arg(nextAttempt.jid, nextAttempt.server, configuredHostText(nextAttempt.connectHost))
+                .arg(nextAttempt.port)
+                .arg(tlsModeText(nextAttempt.tlsMode), proxyModeText(nextAttempt.proxyMode)));
+
+    m_client->disconnectFromServer();
+    QTimer::singleShot(1500, this, [this, nextAttempt]() {
+        if (m_session.has_value() || m_pendingOperation != PendingOperation::Login) {
+            return;
+        }
+        connectLoginAttempt(nextAttempt);
+    });
+    return true;
+}
+
 void XmppService::handleClientError(const QXmppError& error)
 {
     QString message = qxmppErrorText(error);
@@ -1445,6 +2036,11 @@ void XmppService::handleClientError(const QXmppError& error)
     }
     logError(QStringLiteral("XMPP error: %1").arg(message));
     if (!m_session.has_value() && m_pendingOperation != PendingOperation::None) {
+        if (tryNextLoginAttempt(message)) {
+            return;
+        }
+        m_loginAttempts.clear();
+        m_loginAttemptIndex = -1;
         m_pendingOperation = PendingOperation::None;
         m_pendingLogin.reset();
         m_pendingRegistration.reset();
@@ -1595,9 +2191,11 @@ void XmppService::saveCredentialsIfNeeded()
     }
 
     QSettings settings = createSettings();
-    if (!m_settings->ui().rememberTokens) {
+    if (!m_settings->ui().rememberTokens
+        || !m_client->configuration().useSasl2Authentication()
+        || !m_client->configuration().useFastTokenAuthentication()) {
         settings.remove(credentialKey(bareJid));
-        logDebug(QStringLiteral("Removed cached credentials for %1 because token persistence is disabled.").arg(bareJid));
+        logDebug(QStringLiteral("Removed cached credentials for %1 because token persistence is unavailable for the current login mode.").arg(bareJid));
         return;
     }
 
@@ -1625,6 +2223,8 @@ void XmppService::finishAuthentication(const QString& displayName)
     m_pendingOperation = PendingOperation::None;
     m_pendingLogin.reset();
     m_pendingRegistration.reset();
+    m_loginAttempts.clear();
+    m_loginAttemptIndex = -1;
 
     logInfo(QStringLiteral("Authentication succeeded for %1").arg(session.jid));
     m_settings->setLastLoginRequest(loginRequest);

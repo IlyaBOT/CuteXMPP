@@ -62,6 +62,7 @@ target_include_directories(CuteXMPP PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(CuteXMPP PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets ${CUTE_XMPP_QXMPP_TARGET})
 
 if(WIN32)
+    target_link_libraries(CuteXMPP PRIVATE ws2_32)
     target_compile_definitions(CuteXMPP PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
     find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt windeployqt6 HINTS "C:/msys64/ucrt64/bin")

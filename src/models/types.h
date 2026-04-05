@@ -138,3 +138,5 @@ struct ChatSummary
 Q_DECLARE_METATYPE(CuteXmpp::AccountSession)
 Q_DECLARE_METATYPE(CuteXmpp::ChatSummary)
 Q_DECLARE_METATYPE(CuteXmpp::MessageEntry)
+Q_DECLARE_METATYPE(CuteXmpp::LoginRequest)
+Q_DECLARE_METATYPE(CuteXmpp::RegistrationRequest)

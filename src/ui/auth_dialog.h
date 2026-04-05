@@ -21,7 +21,7 @@ class AuthDialog final : public QDialog
 public:
     explicit AuthDialog(QWidget* parent = nullptr);
 
-    void setBusy(bool busy, const QString& status = {});
+    void setBusy(bool busy, const QString& status = {}, int busyPageIndex = -1);
     void showError(const QString& message);
     void clearStatus();
     void applyLoginRequest(const LoginRequest& request);
@@ -29,6 +29,7 @@ public:
 signals:
     void loginSubmitted(const LoginRequest& request);
     void registrationSubmitted(const RegistrationRequest& request);
+    void authenticationCancelled();
 
 private:
     QWidget* buildLoginPage();
@@ -37,6 +38,7 @@ private:
     quint16 parsePort(const QLineEdit* edit) const;
     void setAdvancedPanelVisible(QWidget* panel, bool visible, QPushButton* toggleButton);
     void updateWindowHeight();
+    void updateBusyState();
 
     QStackedWidget* m_pages = nullptr;
     QLabel* m_statusLabel = nullptr;
@@ -58,6 +60,14 @@ private:
     QLineEdit* m_registerPortEdit = nullptr;
     QComboBox* m_registerProxyCombo = nullptr;
     QComboBox* m_registerTlsCombo = nullptr;
+    QPushButton* m_loginPrimaryButton = nullptr;
+    QPushButton* m_loginSecondaryButton = nullptr;
+    QPushButton* m_registerPrimaryButton = nullptr;
+    QPushButton* m_registerSecondaryButton = nullptr;
+    QVector<QWidget*> m_loginBusyWidgets;
+    QVector<QWidget*> m_registerBusyWidgets;
+    bool m_busy = false;
+    int m_busyPageIndex = -1;
 };
 
 }  // namespace CuteXmpp

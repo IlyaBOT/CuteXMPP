@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
         choices=("debug", "release"),
         help="Build type when --preset is not supplied.",
     )
+    parser.add_argument(
+        "app_args",
+        nargs=argparse.REMAINDER,
+        help="Additional arguments passed through to the CuteXMPP executable.",
+    )
     return parser.parse_args()
 
 
@@ -74,8 +79,12 @@ def main() -> None:
     env["QT_FORCE_STDERR_LOGGING"] = "1"
 
     print(colorize(f"[INFO] Launching {binary}"))
+    forwarded_args = list(args.app_args)
+    if forwarded_args and forwarded_args[0] == "--":
+        forwarded_args = forwarded_args[1:]
+
     process = subprocess.Popen(
-        [str(binary)],
+        [str(binary), *forwarded_args],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
