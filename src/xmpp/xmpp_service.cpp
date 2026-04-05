@@ -6,6 +6,7 @@
 #include "src/ui/theme.h"
 
 #include <QBuffer>
+#include <QFileInfo>
 #include <QImage>
 #include <QMap>
 #include <QNetworkProxy>
@@ -24,12 +25,14 @@
 #include <QXmppDiscoveryIq.h>
 #include <QXmppDiscoveryManager.h>
 #include <QXmppError.h>
+#include <QXmppHttpUploadManager.h>
 #include <QXmppLogger.h>
 #include <QXmppMamManager.h>
 #include <QXmppMessage.h>
 #include <QXmppMucForms.h>
 #include <QXmppMucManager.h>
 #include <QXmppMucManagerV2.h>
+#include <QXmppOutOfBandUrl.h>
 #include <QXmppPresence.h>
 #include <QXmppPubSubManager.h>
 #include <QXmppRegisterIq.h>
@@ -75,10 +78,15 @@ QString credentialKey(const QString& bareJid)
     return QStringLiteral("accounts/%1/credentials").arg(bareJid);
 }
 
-QString maskedEndpoint(const QString& jid, const QString& server, quint16 port, const QString& password)
+QString configuredHostText(const QString& host)
 {
-    return QStringLiteral("jid=%1, server=%2, port=%3, password=%4")
-        .arg(jid, server)
+    return host.trimmed().isEmpty() ? QStringLiteral("<auto>") : host.trimmed();
+}
+
+QString maskedEndpoint(const QString& jid, const QString& domain, const QString& host, quint16 port, const QString& password)
+{
+    return QStringLiteral("jid=%1, domain=%2, host=%3, port=%4, password=%5")
+        .arg(jid, domain, configuredHostText(host))
         .arg(port)
         .arg(maskSecret(password));
 }
@@ -120,7 +128,7 @@ QXmppConfiguration::StreamSecurityMode streamSecurityModeFor(TlsMode mode)
         return QXmppConfiguration::TLSDisabled;
     case TlsMode::StartTls:
     default:
-        return QXmppConfiguration::TLSRequired;
+        return QXmppConfiguration::TLSEnabled;
     }
 }
 
@@ -283,6 +291,26 @@ QString previewTextForMessage(const QString& text)
     return preview.left(160);
 }
 
+QString messageDisplayText(const QXmppMessage& message)
+{
+    const QString body = message.body().trimmed();
+    if (!body.isEmpty()) {
+        return body;
+    }
+
+    const QString outOfBandUrl = message.outOfBandUrl().trimmed();
+    if (!outOfBandUrl.isEmpty()) {
+        return outOfBandUrl;
+    }
+
+    const auto outOfBandUrls = message.outOfBandUrls();
+    if (!outOfBandUrls.isEmpty()) {
+        return outOfBandUrls.constFirst().url().trimmed();
+    }
+
+    return {};
+}
+
 }  // namespace
 
 XmppService::XmppService(AppSettings* settings, QObject* parent)
@@ -317,6 +345,7 @@ XmppService::XmppService(AppSettings* settings, QObject* parent)
     m_mamManager = m_client->addNewExtension<QXmppMamManager>();
     m_bookmarkManager = m_client->addNewExtension<QXmppBookmarkManager>();
     m_discoveryManager = m_client->addNewExtension<QXmppDiscoveryManager>();
+    m_httpUploadManager = m_client->addNewExtension<QXmppHttpUploadManager>();
     m_pubSubManager = m_client->addNewExtension<QXmppPubSubManager>();
     m_mucManager = m_client->addNewExtension<QXmppMucManager>();
     m_mucManagerV2 = m_client->addNewExtension<QXmppMucManagerV2>();
@@ -365,6 +394,7 @@ void XmppService::login(const LoginRequest& rawRequest)
     const QString jid = bareJidOf(rawRequest.jid);
     const QString username = userFromJid(jid);
     const QString server = rawRequest.server.trimmed().isEmpty() ? domainFromJid(jid) : rawRequest.server.trimmed();
+    const QString connectHost = rawRequest.connectHost.trimmed();
     if (username.isEmpty()) {
         emit authenticationFailed("Username is required.");
         return;
@@ -381,6 +411,7 @@ void XmppService::login(const LoginRequest& rawRequest)
     LoginRequest request = rawRequest;
     request.jid = jid;
     request.server = server;
+    request.connectHost = connectHost;
 
     resetSessionState();
     m_pendingLogin = request;
@@ -389,7 +420,7 @@ void XmppService::login(const LoginRequest& rawRequest)
     m_registrationManager->setRegisterOnConnectEnabled(false);
 
     logInfo(QStringLiteral("Starting login with %1, tls=%2, proxy=%3 (%4)")
-                .arg(maskedEndpoint(request.jid, request.server, request.port, request.password),
+                .arg(maskedEndpoint(request.jid, request.server, request.connectHost, request.port, request.password),
                      tlsModeText(request.tlsMode),
                      proxyModeText(request.proxyMode),
                      proxyDetails(request.proxyMode)));
@@ -398,7 +429,9 @@ void XmppService::login(const LoginRequest& rawRequest)
     configuration.setJid(request.jid);
     configuration.setPassword(request.password);
     configuration.setDomain(request.server);
-    configuration.setHost(request.server);
+    if (!request.connectHost.isEmpty()) {
+        configuration.setHost(request.connectHost);
+    }
     configuration.setPort(request.port);
     configuration.setResourcePrefix("CuteXMPP");
     configuration.setAutoAcceptSubscriptions(true);
@@ -424,7 +457,7 @@ void XmppService::login(const LoginRequest& rawRequest)
     QXmppPresence presence(QXmppPresence::Available);
     presence.setAvailableStatusType(QXmppPresence::Online);
     logDebug(QStringLiteral("Connecting to XMPP server: jid=%1, domain=%2, host=%3, port=%4, tls=%5, proxy=%6, sasl2=%7, fast=%8")
-                 .arg(configuration.jid(), configuration.domain(), configuration.host())
+                 .arg(configuration.jid(), configuration.domain(), configuredHostText(configuration.host()))
                  .arg(configuration.port())
                  .arg(tlsModeText(request.tlsMode), proxyDetails(request.proxyMode))
                  .arg(configuration.useSasl2Authentication() ? "on" : "off")
@@ -436,6 +469,7 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
 {
     const QString username = rawRequest.username.trimmed();
     const QString server = rawRequest.server.trimmed();
+    const QString connectHost = rawRequest.connectHost.trimmed();
     if (username.isEmpty() || username.contains('@') || username.contains('/')) {
         emit authenticationFailed("Choose a username without @ or / characters.");
         return;
@@ -452,6 +486,7 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
     RegistrationRequest request = rawRequest;
     request.username = username;
     request.server = server;
+    request.connectHost = connectHost;
 
     resetSessionState();
     m_pendingRegistration = request;
@@ -459,8 +494,8 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
     m_pendingOperation = PendingOperation::RegistrationHandshake;
     m_registrationManager->setRegisterOnConnectEnabled(true);
 
-    logInfo(QStringLiteral("Starting registration with username=%1, server=%2, port=%3, tls=%4, proxy=%5 (%6), password=%7")
-                .arg(request.username, request.server)
+    logInfo(QStringLiteral("Starting registration with username=%1, domain=%2, host=%3, port=%4, tls=%5, proxy=%6 (%7), password=%8")
+                .arg(request.username, request.server, configuredHostText(request.connectHost))
                 .arg(request.port)
                 .arg(tlsModeText(request.tlsMode),
                      proxyModeText(request.proxyMode),
@@ -469,7 +504,9 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
 
     QXmppConfiguration configuration;
     configuration.setDomain(request.server);
-    configuration.setHost(request.server);
+    if (!request.connectHost.isEmpty()) {
+        configuration.setHost(request.connectHost);
+    }
     configuration.setPort(request.port);
     configuration.setResourcePrefix("CuteXMPP");
     configuration.setUseSasl2Authentication(true);
@@ -478,7 +515,7 @@ void XmppService::registerAccount(const RegistrationRequest& rawRequest)
     configuration.setNetworkProxy(networkProxyFor(request.proxyMode));
 
     logDebug(QStringLiteral("Connecting for in-band registration: domain=%1, host=%2, port=%3, tls=%4, proxy=%5")
-                 .arg(configuration.domain(), configuration.host())
+                 .arg(configuration.domain(), configuredHostText(configuration.host()))
                  .arg(configuration.port())
                  .arg(tlsModeText(request.tlsMode), proxyDetails(request.proxyMode)));
     m_client->connectToServer(configuration);
@@ -567,6 +604,91 @@ void XmppService::sendMessage(const QString& chatId, const QString& text)
         updateConversationPreview(chatId);
         emit messagesChanged(chatId);
         emit chatsChanged();
+    });
+}
+
+void XmppService::sendAttachment(const QString& chatId, const QString& filePath)
+{
+    if (!m_session.has_value() || chatId.isEmpty() || filePath.trimmed().isEmpty()) {
+        return;
+    }
+    if (!m_httpUploadManager) {
+        emit errorMessage("File upload manager is not available.");
+        return;
+    }
+
+    const QFileInfo fileInfo(filePath);
+    if (!fileInfo.exists() || !fileInfo.isFile()) {
+        emit errorMessage("The selected file does not exist.");
+        return;
+    }
+
+    emit infoMessage(QStringLiteral("Uploading %1...").arg(fileInfo.fileName()));
+    logInfo(QStringLiteral("Uploading attachment for %1: %2").arg(chatId, fileInfo.filePath()));
+
+    const auto upload = m_httpUploadManager->uploadFile(fileInfo);
+    if (!upload) {
+        emit errorMessage("The server does not support file uploads.");
+        return;
+    }
+    connect(upload.get(), &QXmppHttpUpload::finished, this, [this, chatId, fileInfo, upload](const QXmppHttpUpload::Result& result) {
+        if (const auto* url = std::get_if<QUrl>(&result)) {
+            const QString urlText = url->toString();
+
+            QXmppMessage message;
+            message.setTo(chatId);
+            message.setType((m_chats.value(chatId).isGroupChat || m_mucRooms.contains(chatId)) ? QXmppMessage::GroupChat : QXmppMessage::Chat);
+            message.setBody(urlText);
+            message.setOutOfBandUrl(urlText);
+            message.setOriginId(QUuid::createUuid().toString(QUuid::WithoutBraces));
+            if (message.type() == QXmppMessage::Chat) {
+                message.setReceiptRequested(true);
+            }
+
+            m_client->sendSensitive(std::move(message)).then(this, [this, chatId, fileInfo, urlText](QXmpp::SendResult&& sendResult) {
+                if (std::holds_alternative<QXmppError>(sendResult)) {
+                    const QString errorText = qxmppErrorText(std::get<QXmppError>(sendResult));
+                    logError(QStringLiteral("Failed to send attachment link to %1: %2").arg(chatId, errorText));
+                    emit errorMessage(errorText);
+                    return;
+                }
+
+                if (!m_session.has_value()) {
+                    return;
+                }
+
+                MessageEntry entry;
+                entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                entry.chatId = chatId;
+                entry.senderJid = m_session->bareJid;
+                if (m_chats.value(chatId).isGroupChat || m_mucRooms.contains(chatId)) {
+                    QXmppMucRoom* room = m_mucRooms.value(chatId);
+                    entry.senderName = room && !room->nickName().trimmed().isEmpty() ? room->nickName() : m_session->displayName;
+                } else {
+                    entry.senderName = m_session->displayName;
+                }
+                entry.text = urlText;
+                entry.timestamp = QDateTime::currentDateTime();
+                entry.outgoing = true;
+
+                appendMessageIfMissing(m_messages[chatId], entry);
+                trimConversationBuffer(m_messages[chatId], false);
+                updateConversationPreview(chatId);
+                emit messagesChanged(chatId);
+                emit chatsChanged();
+                emit infoMessage(QStringLiteral("Attachment sent: %1").arg(fileInfo.fileName()));
+            });
+            return;
+        }
+
+        if (std::holds_alternative<QXmpp::Cancelled>(result)) {
+            emit infoMessage(QStringLiteral("Upload cancelled: %1").arg(fileInfo.fileName()));
+            return;
+        }
+
+        const QString errorText = qxmppErrorText(std::get<QXmppError>(result));
+        logError(QStringLiteral("Attachment upload failed for %1: %2").arg(fileInfo.filePath(), errorText));
+        emit errorMessage(errorText);
     });
 }
 
@@ -861,12 +983,13 @@ void XmppService::requestConversationPreview(const QString& chatId)
 
             const bool isGroupChat = m_chats.value(chatId).isGroupChat || m_mucRooms.contains(chatId);
             const QXmppMessage& message = retrieved.messages.constLast();
-            if (message.body().trimmed().isEmpty()) {
+            const QString displayText = messageDisplayText(message);
+            if (displayText.isEmpty()) {
                 return;
             }
 
             ChatSummary& chat = m_chats[chatId];
-            chat.preview = previewTextForMessage(message.body());
+            chat.preview = previewTextForMessage(displayText);
             chat.lastActivity = message.stamp().isValid() ? message.stamp() : QDateTime::currentDateTime();
 
             if (isGroupChat) {
@@ -931,7 +1054,8 @@ void XmppService::loadConversationFromMam(const QString& chatId, int maxMessages
             const bool isGroupChat = m_chats.value(chatId).isGroupChat || m_mucRooms.contains(chatId);
 
             for (const QXmppMessage& message : retrieved.messages) {
-                if (message.body().trimmed().isEmpty()) {
+                const QString displayText = messageDisplayText(message);
+                if (displayText.isEmpty()) {
                     continue;
                 }
 
@@ -954,7 +1078,7 @@ void XmppService::loadConversationFromMam(const QString& chatId, int maxMessages
                     entry.senderName = outgoing
                         ? (roomNick.isEmpty() ? m_session->displayName : roomNick)
                         : (senderNick.isEmpty() ? m_chats.value(chatId).title : senderNick);
-                    entry.text = message.body().trimmed();
+                    entry.text = displayText;
                     entry.timestamp = message.stamp().isValid() ? message.stamp() : QDateTime::currentDateTime();
                     entry.outgoing = outgoing;
                     appendMessageIfMissing(conversation, entry);
@@ -974,7 +1098,7 @@ void XmppService::loadConversationFromMam(const QString& chatId, int maxMessages
                 entry.chatId = chatId;
                 entry.senderJid = outgoing ? m_session->bareJid : chatId;
                 entry.senderName = outgoing ? m_session->displayName : m_chats.value(chatId).title;
-                entry.text = message.body().trimmed();
+                entry.text = displayText;
                 entry.timestamp = message.stamp().isValid() ? message.stamp() : QDateTime::currentDateTime();
                 entry.outgoing = outgoing;
                 appendMessageIfMissing(conversation, entry);
@@ -1240,7 +1364,8 @@ void XmppService::registerMucRoom(QXmppMucRoom* room)
     });
 
     connect(room, &QXmppMucRoom::messageReceived, this, [this, room](const QXmppMessage& message) {
-        if (!m_session.has_value() || message.body().trimmed().isEmpty()) {
+        const QString displayText = messageDisplayText(message);
+        if (!m_session.has_value() || displayText.isEmpty()) {
             return;
         }
 
@@ -1257,7 +1382,7 @@ void XmppService::registerMucRoom(QXmppMucRoom* room)
         entry.chatId = roomJid;
         entry.senderJid = roomJid;
         entry.senderName = senderNick.isEmpty() ? m_chats.value(roomJid).title : senderNick;
-        entry.text = message.body().trimmed();
+        entry.text = displayText;
         entry.timestamp = message.stamp().isValid() ? message.stamp() : QDateTime::currentDateTime();
         entry.outgoing = false;
 
@@ -1298,6 +1423,7 @@ void XmppService::handleClientDisconnected()
         loginRequest.jid = QStringLiteral("%1@%2").arg(registration.username, registration.server);
         loginRequest.password = registration.password;
         loginRequest.server = registration.server;
+        loginRequest.connectHost = registration.connectHost;
         loginRequest.port = registration.port;
         loginRequest.proxyMode = registration.proxyMode;
         loginRequest.tlsMode = registration.tlsMode;
@@ -1309,6 +1435,10 @@ void XmppService::handleClientDisconnected()
 void XmppService::handleClientError(const QXmppError& error)
 {
     QString message = qxmppErrorText(error);
+    if (message.contains(QStringLiteral("No supported SASL mechanism available"), Qt::CaseInsensitive)
+        || message.contains(QStringLiteral("PLAIN is disabled"), Qt::CaseInsensitive)) {
+        message += QStringLiteral(" The server only offered mechanisms that require a different TLS mode.");
+    }
     const QString socketError = m_client->socketErrorString().trimmed();
     if (!socketError.isEmpty()) {
         message += QStringLiteral(" Socket: %1").arg(socketError);
@@ -1328,7 +1458,8 @@ void XmppService::handleClientError(const QXmppError& error)
 
 void XmppService::handleMessageReceived(const QXmppMessage& message)
 {
-    if (!m_session.has_value() || message.body().trimmed().isEmpty()) {
+    const QString displayText = messageDisplayText(message);
+    if (!m_session.has_value() || displayText.isEmpty()) {
         return;
     }
 
@@ -1354,7 +1485,7 @@ void XmppService::handleMessageReceived(const QXmppMessage& message)
     entry.chatId = chatId;
     entry.senderJid = chatId;
     entry.senderName = m_chats.value(chatId).title;
-    entry.text = message.body().trimmed();
+    entry.text = displayText;
     entry.timestamp = message.stamp().isValid() ? message.stamp() : QDateTime::currentDateTime();
     entry.outgoing = false;
 
@@ -1487,6 +1618,7 @@ void XmppService::finishAuthentication(const QString& displayName)
     session.username = userFromJid(loginRequest.jid);
     session.displayName = displayName.trimmed().isEmpty() ? session.username : displayName.trimmed();
     session.server = loginRequest.server;
+    session.connectHost = loginRequest.connectHost;
     session.port = loginRequest.port;
 
     m_session = session;

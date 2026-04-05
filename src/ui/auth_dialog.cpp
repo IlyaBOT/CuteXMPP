@@ -18,8 +18,6 @@ namespace {
 
 constexpr int kAuthWindowWidth = 360;
 constexpr int kAuthWindowBaseHeight = 380;
-constexpr int kAuthAdvancedExtraPadding = 12;
-constexpr int kAuthStatusExtraSpacing = 4;
 
 QString userFromFullJid(const QString& jid)
 {
@@ -107,12 +105,14 @@ AuthDialog::AuthDialog(QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle("CuteXMPP");
-    setFixedSize(kAuthWindowWidth, kAuthWindowBaseHeight);
+    setFixedWidth(kAuthWindowWidth);
+    resize(kAuthWindowWidth, kAuthWindowBaseHeight);
     setModal(false);
 
     auto* rootLayout = new QVBoxLayout(this);
     rootLayout->setContentsMargins(8, 8, 8, 8);
     rootLayout->setSpacing(0);
+    rootLayout->setSizeConstraint(QLayout::SetFixedSize);
 
     rootLayout->addWidget(buildAuthCard());
     connect(m_pages, &QStackedWidget::currentChanged, this, [this](int) { updateWindowHeight(); });
@@ -153,6 +153,7 @@ void AuthDialog::applyLoginRequest(const LoginRequest& request)
     m_loginJidEdit->setText(userFromFullJid(request.jid));
     m_loginPasswordEdit->setText(request.password);
     m_loginServerEdit->setText(request.server);
+    m_loginConnectHostEdit->setText(request.connectHost);
     m_loginPortEdit->setText(QString::number(request.port));
 
     auto setComboValue = [](QComboBox* combo, int value) {
@@ -225,9 +226,9 @@ QWidget* AuthDialog::buildLoginPage()
     auto* usernameLabel = createFieldLabel("Username", page);
     m_loginJidEdit = createField("ilya", page);
 
-    auto* serverLabel = createFieldLabel("Server", page);
-    m_loginServerEdit = createField("xmpp.domain.com", page);
-    m_loginServerEdit->setText("xmpp.ilyabot.space");
+    auto* serverLabel = createFieldLabel("XMPP domain", page);
+    m_loginServerEdit = createField("example.com", page);
+    m_loginServerEdit->setText("ilyabot.space");
 
     auto* passwordLabel = createFieldLabel("Password", page);
     m_loginPasswordEdit = createField("Password", page);
@@ -240,6 +241,9 @@ QWidget* AuthDialog::buildLoginPage()
     auto* advancedLayout = new QVBoxLayout(m_loginAdvancedPanel);
     advancedLayout->setContentsMargins(0, 0, 0, 0);
     advancedLayout->setSpacing(4);
+
+    auto* connectHostLabel = createFieldLabel("Connect host (optional)", m_loginAdvancedPanel);
+    m_loginConnectHostEdit = createField("xmpp.example.com", m_loginAdvancedPanel);
 
     auto* portLabel = createFieldLabel("Port", m_loginAdvancedPanel);
     m_loginPortEdit = createField("5222", m_loginAdvancedPanel);
@@ -254,6 +258,8 @@ QWidget* AuthDialog::buildLoginPage()
     m_loginTlsCombo = createComboBox(m_loginAdvancedPanel);
     populateTlsCombo(m_loginTlsCombo);
 
+    advancedLayout->addWidget(connectHostLabel);
+    advancedLayout->addWidget(m_loginConnectHostEdit);
     advancedLayout->addWidget(portLabel);
     advancedLayout->addWidget(m_loginPortEdit);
     advancedLayout->addWidget(proxyLabel);
@@ -309,6 +315,7 @@ QWidget* AuthDialog::buildLoginPage()
         request.jid = QStringLiteral("%1@%2").arg(username, server);
         request.password = m_loginPasswordEdit->text();
         request.server = server;
+        request.connectHost = m_loginConnectHostEdit->text().trimmed();
         request.port = parsePort(m_loginPortEdit);
         request.proxyMode = static_cast<ProxyMode>(m_loginProxyCombo->currentData().toInt());
         request.tlsMode = static_cast<TlsMode>(m_loginTlsCombo->currentData().toInt());
@@ -346,9 +353,9 @@ QWidget* AuthDialog::buildRegisterPage()
     auto* usernameLabel = createFieldLabel("Username", page);
     m_registerUsernameEdit = createField("ilya", page);
 
-    auto* serverLabel = createFieldLabel("Server", page);
-    m_registerServerEdit = createField("xmpp.domain.com", page);
-    m_registerServerEdit->setText("xmpp.ilyabot.space");
+    auto* serverLabel = createFieldLabel("XMPP domain", page);
+    m_registerServerEdit = createField("example.com", page);
+    m_registerServerEdit->setText("ilyabot.space");
 
     auto* passwordLabel = createFieldLabel("Password", page);
     m_registerPasswordEdit = createField("Password", page);
@@ -361,6 +368,9 @@ QWidget* AuthDialog::buildRegisterPage()
     auto* advancedLayout = new QVBoxLayout(m_registerAdvancedPanel);
     advancedLayout->setContentsMargins(0, 0, 0, 0);
     advancedLayout->setSpacing(4);
+
+    auto* connectHostLabel = createFieldLabel("Connect host (optional)", m_registerAdvancedPanel);
+    m_registerConnectHostEdit = createField("xmpp.example.com", m_registerAdvancedPanel);
 
     auto* portLabel = createFieldLabel("Port", m_registerAdvancedPanel);
     m_registerPortEdit = createField("5222", m_registerAdvancedPanel);
@@ -375,6 +385,8 @@ QWidget* AuthDialog::buildRegisterPage()
     m_registerTlsCombo = createComboBox(m_registerAdvancedPanel);
     populateTlsCombo(m_registerTlsCombo);
 
+    advancedLayout->addWidget(connectHostLabel);
+    advancedLayout->addWidget(m_registerConnectHostEdit);
     advancedLayout->addWidget(portLabel);
     advancedLayout->addWidget(m_registerPortEdit);
     advancedLayout->addWidget(proxyLabel);
@@ -427,6 +439,7 @@ QWidget* AuthDialog::buildRegisterPage()
         request.username = m_registerUsernameEdit->text().trimmed();
         request.server = m_registerServerEdit->text().trimmed();
         request.password = m_registerPasswordEdit->text();
+        request.connectHost = m_registerConnectHostEdit->text().trimmed();
         request.port = parsePort(m_registerPortEdit);
         request.proxyMode = static_cast<ProxyMode>(m_registerProxyCombo->currentData().toInt());
         request.tlsMode = static_cast<TlsMode>(m_registerTlsCombo->currentData().toInt());
@@ -446,6 +459,8 @@ quint16 AuthDialog::parsePort(const QLineEdit* edit) const
 void AuthDialog::setAdvancedPanelVisible(QWidget* panel, bool visible, QPushButton* toggleButton)
 {
     panel->setVisible(visible);
+    panel->setMaximumHeight(visible ? QWIDGETSIZE_MAX : 0);
+    panel->setSizePolicy(QSizePolicy::Preferred, visible ? QSizePolicy::Preferred : QSizePolicy::Ignored);
     toggleButton->setText(visible ? "Hide advanced settings" : "Advanced settings");
     QTimer::singleShot(0, this, &AuthDialog::updateWindowHeight);
 }
@@ -461,21 +476,20 @@ void AuthDialog::updateWindowHeight()
             pageLayout->invalidate();
             pageLayout->activate();
         }
+        currentPage->adjustSize();
         m_pages->setFixedHeight(currentPage->sizeHint().height());
     }
 
-    QWidget* advancedPanel = m_pages->currentIndex() == 0 ? m_loginAdvancedPanel : m_registerAdvancedPanel;
-    int dialogHeight = kAuthWindowBaseHeight;
-
-    if (advancedPanel && advancedPanel->isVisible()) {
-        dialogHeight += advancedPanel->sizeHint().height() + kAuthAdvancedExtraPadding;
+    if (m_frame && m_frame->layout()) {
+        m_frame->layout()->invalidate();
+        m_frame->layout()->activate();
     }
 
-    if (m_statusLabel && m_statusLabel->isVisible()) {
-        dialogHeight += m_statusLabel->sizeHint().height() + kAuthStatusExtraSpacing;
-    }
-
-    setFixedHeight(dialogHeight);
+    adjustSize();
+    const int targetHeight = qMax(kAuthWindowBaseHeight, sizeHint().height());
+    setMinimumHeight(targetHeight);
+    setMaximumHeight(targetHeight);
+    resize(kAuthWindowWidth, targetHeight);
 }
 
 }  // namespace CuteXmpp

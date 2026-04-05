@@ -276,6 +276,7 @@ void AppSettings::load()
         request.jid = lastJid;
         request.password = settings.value("session/lastPassword").toString();
         request.server = lastServer;
+        request.connectHost = settings.value("session/lastConnectHost").toString().trimmed();
         request.port = static_cast<quint16>(settings.value("session/lastPort", 5222).toUInt());
         request.proxyMode = static_cast<ProxyMode>(settings.value("session/lastProxyMode", static_cast<int>(ProxyMode::System)).toInt());
         request.tlsMode = static_cast<TlsMode>(settings.value("session/lastTlsMode", static_cast<int>(TlsMode::StartTls)).toInt());
@@ -314,6 +315,7 @@ void AppSettings::saveSession() const
     settings.setValue("session/lastJid", m_lastLoginRequest->jid);
     settings.setValue("session/lastPassword", m_lastLoginRequest->password);
     settings.setValue("session/lastServer", m_lastLoginRequest->server);
+    settings.setValue("session/lastConnectHost", m_lastLoginRequest->connectHost);
     settings.setValue("session/lastPort", m_lastLoginRequest->port);
     settings.setValue("session/lastProxyMode", static_cast<int>(m_lastLoginRequest->proxyMode));
     settings.setValue("session/lastTlsMode", static_cast<int>(m_lastLoginRequest->tlsMode));

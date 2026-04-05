@@ -10,6 +10,7 @@ class QXmppClient;
 class QXmppMamManager;
 class QXmppBookmarkManager;
 class QXmppDiscoveryManager;
+class QXmppHttpUploadManager;
 class QXmppPubSubManager;
 class QXmppRegistrationManager;
 class QXmppRosterManager;
@@ -45,6 +46,7 @@ public:
     void registerAccount(const RegistrationRequest& request);
     void disconnectFromServer();
     void sendMessage(const QString& chatId, const QString& text);
+    void sendAttachment(const QString& chatId, const QString& filePath);
     void ensureConversationLoaded(const QString& chatId);
     void loadOlderMessages(const QString& chatId);
     void markChatRead(const QString& chatId);
@@ -53,6 +55,7 @@ signals:
     void authenticationSucceeded(const AccountSession& session);
     void authenticationFailed(const QString& message);
     void errorMessage(const QString& message);
+    void infoMessage(const QString& message);
     void chatsChanged();
     void messagesChanged(const QString& chatId);
     void sessionChanged(const AccountSession& session);
@@ -108,6 +111,7 @@ private:
     QXmppMamManager* m_mamManager = nullptr;
     QXmppBookmarkManager* m_bookmarkManager = nullptr;
     QXmppDiscoveryManager* m_discoveryManager = nullptr;
+    QXmppHttpUploadManager* m_httpUploadManager = nullptr;
     QXmppPubSubManager* m_pubSubManager = nullptr;
     QXmppMucManager* m_mucManager = nullptr;
     QXmppMucManagerV2* m_mucManagerV2 = nullptr;

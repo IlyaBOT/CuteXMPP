@@ -11,6 +11,8 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCursor>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -94,6 +96,9 @@ MainWindow::MainWindow(AppSettings* settings, XmppService* service, QWidget* par
     });
     connect(m_service, &XmppService::errorMessage, this, [this](const QString& message) {
         statusBar()->showMessage(message, 7000);
+    });
+    connect(m_service, &XmppService::infoMessage, this, [this](const QString& message) {
+        statusBar()->showMessage(message, 5000);
     });
     connect(m_service, &XmppService::sessionChanged, this, [this](const AccountSession& session) {
         m_session = session;
@@ -291,9 +296,10 @@ void MainWindow::buildUi()
     composerLayout->setContentsMargins(16, 14, 16, 14);
     composerLayout->setSpacing(12);
 
-    auto* attachButton = new QToolButton(composerFrame);
-    attachButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
-    attachButton->setToolTip("Attachments will be added later.");
+    m_attachButton = new QToolButton(composerFrame);
+    m_attachButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    m_attachButton->setToolTip("Attach file");
+    connect(m_attachButton, &QToolButton::clicked, this, &MainWindow::attachFileToCurrentChat);
 
     m_messageEdit = new QLineEdit(composerFrame);
     m_messageEdit->setPlaceholderText("Write a message...");
@@ -301,7 +307,7 @@ void MainWindow::buildUi()
     m_sendButton = new QToolButton(composerFrame);
     m_sendButton->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
 
-    composerLayout->addWidget(attachButton);
+    composerLayout->addWidget(m_attachButton);
     composerLayout->addWidget(m_messageEdit, 1);
     composerLayout->addWidget(m_sendButton);
 
@@ -581,6 +587,21 @@ void MainWindow::sendCurrentMessage()
     m_messageEdit->clear();
 }
 
+void MainWindow::attachFileToCurrentChat()
+{
+    if (m_currentChatId.isEmpty()) {
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(this, "Choose file");
+    if (path.isEmpty()) {
+        return;
+    }
+
+    statusBar()->showMessage(QStringLiteral("Uploading %1...").arg(QFileInfo(path).fileName()), 0);
+    m_service->sendAttachment(m_currentChatId, path);
+}
+
 void MainWindow::refreshHeader()
 {
     const auto chat = currentChat();
@@ -588,6 +609,9 @@ void MainWindow::refreshHeader()
         m_chatAvatarLabel->setPixmap(makeAvatarPixmap({}, "?", m_theme.accent, 44));
         m_chatTitleLabel->setFullText("No chat selected");
         m_chatMetaLabel->setFullText("Select a contact from your roster.");
+        if (m_attachButton) {
+            m_attachButton->setEnabled(false);
+        }
         m_messageEdit->setEnabled(false);
         m_sendButton->setEnabled(false);
         return;
@@ -596,6 +620,9 @@ void MainWindow::refreshHeader()
     m_chatAvatarLabel->setPixmap(makeAvatarPixmap(chat->avatar, chatIconText(*chat), m_theme.accent, 44));
     m_chatTitleLabel->setFullText(chat->title);
     m_chatMetaLabel->setFullText(headerMetaText(*chat));
+    if (m_attachButton) {
+        m_attachButton->setEnabled(true);
+    }
     m_messageEdit->setEnabled(true);
     m_sendButton->setEnabled(true);
 }

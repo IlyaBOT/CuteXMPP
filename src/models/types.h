@@ -80,6 +80,7 @@ struct AccountSession
     QString username;
     QString displayName;
     QString server;
+    QString connectHost;
     quint16 port = 5222;
     QImage avatar;
 };
@@ -89,6 +90,7 @@ struct LoginRequest
     QString jid;
     QString password;
     QString server;
+    QString connectHost;
     quint16 port = 5222;
     ProxyMode proxyMode = ProxyMode::System;
     TlsMode tlsMode = TlsMode::StartTls;
@@ -99,6 +101,7 @@ struct RegistrationRequest
     QString username;
     QString server;
     QString password;
+    QString connectHost;
     quint16 port = 5222;
     ProxyMode proxyMode = ProxyMode::System;
     TlsMode tlsMode = TlsMode::StartTls;

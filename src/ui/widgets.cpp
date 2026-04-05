@@ -39,6 +39,11 @@ bool isIdentifierPart(const QChar ch)
     return ch.isLetterOrNumber() || ch == QChar('_');
 }
 
+bool isUrlBoundaryTerminator(const QChar ch)
+{
+    return ch.isSpace() || ch == QChar('<') || ch == QChar('>') || ch == QChar('"');
+}
+
 QString wrapSpan(const QString& text, const QString& color, bool bold = false)
 {
     return QStringLiteral("<span style=\"color:%1;%2\">%3</span>")
@@ -204,6 +209,24 @@ QString renderInlineMarkup(const QString& text)
             html += QStringLiteral("<br/>");
             ++index;
             continue;
+        }
+
+        if (text.mid(index, 8) == QStringLiteral("https://") || text.mid(index, 7) == QStringLiteral("http://")) {
+            qsizetype end = index;
+            while (end < text.size() && !isUrlBoundaryTerminator(text.at(end))) {
+                ++end;
+            }
+            QString url = text.mid(index, end - index);
+            while (!url.isEmpty() && QStringLiteral(".,!?;:)").contains(url.back())) {
+                --end;
+                url.chop(1);
+            }
+            if (!url.isEmpty()) {
+                const QString escapedUrl = url.toHtmlEscaped();
+                html += QStringLiteral("<a href=\"%1\" style=\"color:#9dc1ff;text-decoration:none;\">%2</a>").arg(escapedUrl, escapedUrl);
+                index = end;
+                continue;
+            }
         }
 
         if (ch == QChar('`')) {
@@ -487,6 +510,7 @@ MessageBubbleWidget::MessageBubbleWidget(QWidget* parent)
     m_bodyLabel->setObjectName("MessageBodyLabel");
     m_bodyLabel->setWordWrap(true);
     m_bodyLabel->setTextFormat(Qt::RichText);
+    m_bodyLabel->setOpenExternalLinks(true);
     m_bodyLabel->setTextInteractionFlags(Qt::TextBrowserInteraction | Qt::TextSelectableByMouse);
     QFont bodyFont = m_bodyLabel->font();
     bodyFont.setPointSize(14);

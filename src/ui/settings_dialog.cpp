@@ -154,7 +154,11 @@ QWidget* SettingsDialog::buildMyAccountPage()
         m_accountAvatarLabel->setPixmap(makeAvatarPixmap(m_session->avatar, m_session->displayName, QColor("#9a7cff"), 84));
         m_accountNameLabel->setText(m_session->displayName);
         m_accountJidLabel->setText(m_session->jid);
-        m_accountServerLabel->setText(QStringLiteral("Server: %1:%2").arg(m_session->server).arg(m_session->port));
+        if (m_session->connectHost.trimmed().isEmpty()) {
+            m_accountServerLabel->setText(QStringLiteral("Server: %1:%2").arg(m_session->server).arg(m_session->port));
+        } else {
+            m_accountServerLabel->setText(QStringLiteral("Server: %1:%2 via %3").arg(m_session->server).arg(m_session->port).arg(m_session->connectHost));
+        }
     } else {
         m_accountAvatarLabel->setPixmap(makeAvatarPixmap({}, "?", QColor("#9a7cff"), 84));
         m_accountNameLabel->setText("No active account");
@@ -409,7 +413,7 @@ QWidget* SettingsDialog::buildFoldersPage()
         workspace.name = name.trimmed();
         m_workspaces.append(workspace);
         populateFolderList();
-        m_folderList->setCurrentRow(m_workspaces.size() - 1);
+        m_folderList->setCurrentRow(static_cast<int>(m_workspaces.size()) - 1);
     });
     connect(renameButton, &QPushButton::clicked, this, [this]() {
         const int row = m_folderList->currentRow();
@@ -451,7 +455,7 @@ void SettingsDialog::populateFolderList()
         item->setData(Qt::UserRole, workspace.id);
     }
     if (!m_workspaces.isEmpty()) {
-        m_folderList->setCurrentRow(qMin(m_folderList->currentRow(), m_workspaces.size() - 1));
+        m_folderList->setCurrentRow(qMin(m_folderList->currentRow(), static_cast<int>(m_workspaces.size()) - 1));
         if (m_folderList->currentRow() < 0) {
             m_folderList->setCurrentRow(0);
         }

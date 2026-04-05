@@ -47,12 +47,14 @@ private:
     QLineEdit* m_loginJidEdit = nullptr;
     QLineEdit* m_loginPasswordEdit = nullptr;
     QLineEdit* m_loginServerEdit = nullptr;
+    QLineEdit* m_loginConnectHostEdit = nullptr;
     QLineEdit* m_loginPortEdit = nullptr;
     QComboBox* m_loginProxyCombo = nullptr;
     QComboBox* m_loginTlsCombo = nullptr;
     QLineEdit* m_registerUsernameEdit = nullptr;
     QLineEdit* m_registerServerEdit = nullptr;
     QLineEdit* m_registerPasswordEdit = nullptr;
+    QLineEdit* m_registerConnectHostEdit = nullptr;
     QLineEdit* m_registerPortEdit = nullptr;
     QComboBox* m_registerProxyCombo = nullptr;
     QComboBox* m_registerTlsCombo = nullptr;

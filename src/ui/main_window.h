@@ -51,6 +51,7 @@ private:
     void clearLayout(QLayout* layout);
     void handleChatSelectionChanged(QListWidgetItem* current, QListWidgetItem* previous);
     void sendCurrentMessage();
+    void attachFileToCurrentChat();
     void refreshHeader();
     void selectFirstVisibleChat();
     void selectChatById(const QString& chatId);
@@ -82,6 +83,7 @@ private:
     QScrollArea* m_messageScrollArea = nullptr;
     QWidget* m_messageContainer = nullptr;
     QVBoxLayout* m_messageLayout = nullptr;
+    QToolButton* m_attachButton = nullptr;
     QLineEdit* m_messageEdit = nullptr;
     QToolButton* m_sendButton = nullptr;
     QMenu* m_chatMenu = nullptr;
