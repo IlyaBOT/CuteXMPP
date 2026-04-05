@@ -12,8 +12,22 @@ option(CUTE_XMPP_ENABLE_LTO "Enable link-time optimization" OFF)
 
 include(cmake/CompilerWarnings.cmake)
 
+set(CUTE_XMPP_LOCAL_QXMPP_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/.deps/qxmpp/install")
+if(EXISTS "${CUTE_XMPP_LOCAL_QXMPP_PREFIX}")
+    list(PREPEND CMAKE_PREFIX_PATH "${CUTE_XMPP_LOCAL_QXMPP_PREFIX}")
+endif()
+
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets)
-find_package(QXmppQt6 REQUIRED)
+find_package(QXmppQt6 CONFIG QUIET)
+find_package(QXmpp CONFIG QUIET)
+
+if(TARGET QXmpp::QXmpp)
+    set(CUTE_XMPP_QXMPP_TARGET QXmpp::QXmpp)
+elseif(TARGET QXmppQt6::QXmppQt6)
+    set(CUTE_XMPP_QXMPP_TARGET QXmppQt6::QXmppQt6)
+else()
+    message(FATAL_ERROR "QXmpp was not found. Install a Qt6-compatible QXmpp package or set CMAKE_PREFIX_PATH to its install prefix.")
+endif()
 
 qt_standard_project_setup()
 
@@ -45,7 +59,7 @@ qt_add_executable(CuteXMPP
 
 target_include_directories(CuteXMPP PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(CuteXMPP PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets QXmpp::QXmpp)
+target_link_libraries(CuteXMPP PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets ${CUTE_XMPP_QXMPP_TARGET})
 
 if(WIN32)
     target_compile_definitions(CuteXMPP PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

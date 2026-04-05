@@ -81,6 +81,19 @@ patterns = {
         r'class\s+(?:QXMPP_EXPORT\s+)?Q_DECL_DEPRECATED_X\("Removed from public API \(unmaintained\)"\)\s+(?:QXMPP_EXPORT\s+)?QXmppRpcManager',
         'class QXMPP_EXPORT QXmppRpcManager',
     ),
+    source_dir / "CMakeLists.txt": (
+        r'find_package\(Qt6Core5Compat\)',
+        'find_package(Qt6Core5Compat QUIET)',
+    ),
+    source_dir / "src" / "CMakeLists.txt": (
+        r'target_link_libraries\(\$\{QXMPP_TARGET\}\s+'
+        r'PUBLIC Qt\$\{QT_VERSION_MAJOR\}::Core Qt\$\{QT_VERSION_MAJOR\}::Network Qt\$\{QT_VERSION_MAJOR\}::Xml\s+'
+        r'PRIVATE \$\{QXMPP_TARGET\}_internal\s+'
+        r'\)',
+        'target_link_libraries(${QXMPP_TARGET}\n'
+        '    PUBLIC Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Xml\n'
+        ')',
+    ),
 }
 
 for path, (pattern, replacement) in patterns.items():
